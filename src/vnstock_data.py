@@ -8,39 +8,63 @@ from .data import RAW_DIR, save_parquet, standardize_ohlcv
 
 
 class VNStockAdapter:
-    """Single access point for VNStock market data."""
+    """Single access point for VNStock market data.
+
+    The adapter tries the current Market interface first and preserves the
+    underlying errors so deployment problems are visible instead of silently
+    falling through to an incompatible legacy call.
+    """
 
     def __init__(self, source: str = "VCI"):
         self.source = source
 
-    def _market(self):
+    def fetch_index(self, symbol: str, start: str = "2010-01-01", end: Optional[str] = None) -> pd.DataFrame:
+        errors = []
+
         try:
             from vnstock import Market
-            return Market(source=self.source)
-        except Exception:
-            return None
+            market = Market(source=self.source)
+            df = market.index(symbol).ohlcv(start=start, end=end)
+            return standardize_ohlcv(df)
+        except Exception as exc:
+            errors.append(f"Market interface: {type(exc).__name__}: {exc}")
 
-    def fetch_index(self, symbol: str, start: str = "2010-01-01", end: Optional[str] = None) -> pd.DataFrame:
-        market = self._market()
-        if market is not None:
-            try:
-                return standardize_ohlcv(market.index(symbol).ohlcv(start=start, end=end))
-            except Exception:
-                pass
-        from vnstock import Vnstock
-        stock = Vnstock().stock(symbol=symbol, source=self.source)
-        return standardize_ohlcv(stock.quote.history(start=start, end=end, interval="1D"))
+        try:
+            from vnstock import Vnstock
+            stock = Vnstock().stock(symbol=symbol, source=self.source)
+            df = stock.quote.history(start=start, end=end, interval="1D")
+            return standardize_ohlcv(df)
+        except Exception as exc:
+            errors.append(f"Legacy interface: {type(exc).__name__}: {exc}")
+
+        detail = " | ".join(errors)
+        raise ConnectionError(
+            f"Không thể lấy dữ liệu {symbol} từ VNStock. {detail}"
+        )
 
     def fetch_equity(self, symbol: str, start: str = "2010-01-01", end: Optional[str] = None) -> pd.DataFrame:
-        market = self._market()
-        if market is not None:
-            try:
-                return standardize_ohlcv(market.equity(symbol).ohlcv(start=start, end=end))
-            except Exception:
-                pass
-        from vnstock import Vnstock
-        stock = Vnstock().stock(symbol=symbol, source=self.source)
-        return standardize_ohlcv(stock.quote.history(start=start, end=end, interval="1D"))
+        errors = []
+
+        try:
+            from vnstock import Market
+            market = Market(source=self.source)
+            df = market.equity(symbol).ohlcv(start=start, end=end)
+            return standardize_ohlcv(df)
+        except Exception as exc:
+            errors.append(f"Market interface: {type(exc).__name__}: {exc}")
+
+        try:
+            from vnstock import Vnstock
+            stock = Vnstock().stock(symbol=symbol, source=self.source)
+            df = stock.quote.history(start=start, end=end, interval="1D")
+            return standardize_ohlcv(df)
+        except Exception as exc:
+            errors.append(f"Legacy interface: {type(exc).__name__}: {exc}")
+
+        detail = " | ".join(errors)
+        raise ConnectionError(
+            f"Không thể lấy dữ liệu {symbol} từ VNStock. {detail}"
+        )
 
 
 def update_market_dataset(symbol: str, dataset_name: Optional[str] = None, asset_type: str = "index", start: str = "2010-01-01", end: Optional[str] = None, source: str = "VCI") -> str:
