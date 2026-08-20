@@ -2,7 +2,6 @@ from datetime import date
 import queue
 import threading
 import time
-
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -10,283 +9,112 @@ from vnstock import Market, Reference, register_user
 
 st.set_page_config(page_title="Vietnam Market Regime", page_icon="📊", layout="wide")
 
-VN30_FALLBACK = ["ACB","BCM","BID","BVH","CTG","FPT","GAS","GVR","HDB","HPG","MBB","MSN","MWG","PLX","SAB","SHB","SSB","SSI","STB","TCB","TPB","VCB","VHM","VIB","VIC","VJC","VNM","VPB","VRE","VIX"]
+VN30_FALLBACK=["ACB","BCM","BID","BVH","CTG","FPT","GAS","GVR","HDB","HPG","MBB","MSN","MWG","PLX","SAB","SHB","SSB","SSI","STB","TCB","TPB","VCB","VHM","VIB","VIC","VJC","VNM","VPB","VRE","VIX"]
 
+def clean(df):
+    if df is None or df.empty: raise ValueError("Dữ liệu rỗng")
+    x=df.copy(); x.columns=[str(c).lower() for c in x.columns]
+    dc="time" if "time" in x else "date"
+    x=x.rename(columns={dc:"date"}); x["date"]=pd.to_datetime(x["date"]).dt.normalize()
+    for c in ["open","high","low","close"]:
+        x[c]=pd.to_numeric(x[c],errors="coerce")
+    return x.dropna(subset=["date","close"]).drop_duplicates("date").sort_values("date")
 
-def normalize_ohlcv(df):
-    if df is None or df.empty:
-        raise ValueError("API trả về dữ liệu rỗng")
-    out = df.copy()
-    out.columns = [str(c).strip().lower().replace(" ", "_").replace("-", "_") for c in out.columns]
-    date_col = "time" if "time" in out.columns else "date" if "date" in out.columns else None
-    if date_col is None or "close" not in out.columns:
-        raise ValueError("Dữ liệu phải có cột thời gian và close")
-    out = out.rename(columns={date_col: "date"})
-    for col in ["open", "high", "low", "close", "volume"]:
-        if col in out.columns:
-            out[col] = pd.to_numeric(out[col], errors="coerce")
-    out["date"] = pd.to_datetime(out["date"], errors="coerce").dt.normalize()
-    return out.dropna(subset=["date", "close"]).sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
+def timeout_call(fn,**kw):
+    q=queue.Queue(1)
+    def run():
+        try:q.put((1,fn(**kw)))
+        except Exception as e:q.put((0,e))
+    threading.Thread(target=run,daemon=True).start()
+    try:ok,v=q.get(timeout=40)
+    except queue.Empty:raise TimeoutError("Quá 40 giây")
+    if not ok:raise v
+    return v
 
-
-def call_with_timeout(func, timeout=45, **kwargs):
-    result = queue.Queue(maxsize=1)
-    def worker():
-        try:
-            result.put((True, func(**kwargs)))
-        except Exception as exc:
-            result.put((False, exc))
-    thread = threading.Thread(target=worker, daemon=True)
-    thread.start()
-    try:
-        ok, value = result.get(timeout=timeout)
-    except queue.Empty:
-        raise TimeoutError(f"Quá thời gian {timeout} giây")
-    if ok:
-        return value
-    raise value
-
-
-def fetch_history(fetcher, start_date, end_date, chunk_days=119, timeout=45, retries=2, progress_callback=None):
-    pieces = []
-    cursor = pd.Timestamp(start_date).normalize()
-    end_ts = pd.Timestamp(end_date).normalize()
-    chunks = []
-    while cursor <= end_ts:
-        chunk_end = min(cursor + pd.Timedelta(days=chunk_days), end_ts)
-        chunks.append((cursor, chunk_end))
-        cursor = chunk_end + pd.Timedelta(days=1)
-
-    errors = []
-    for n, (chunk_start, chunk_end) in enumerate(chunks, 1):
-        if progress_callback:
-            progress_callback(n, len(chunks), chunk_start, chunk_end)
-        last_error = None
-        for attempt in range(retries):
+def history(fn,start,end,retries=2):
+    parts=[]; errors=[]; a=pd.Timestamp(start); end=pd.Timestamp(end)
+    while a<=end:
+        b=min(a+pd.Timedelta(days=119),end); last=None
+        for k in range(retries):
             try:
-                raw = call_with_timeout(
-                    fetcher,
-                    timeout=timeout,
-                    start=chunk_start.strftime("%Y-%m-%d"),
-                    end=chunk_end.strftime("%Y-%m-%d"),
-                    interval="1D",
-                )
-                pieces.append(normalize_ohlcv(raw))
-                last_error = None
-                break
-            except Exception as exc:
-                last_error = exc
-                if attempt + 1 < retries:
-                    time.sleep(1.5 * (attempt + 1))
-        if last_error is not None:
-            errors.append(f"{chunk_start.date()} đến {chunk_end.date()}: {type(last_error).__name__}")
+                parts.append(clean(timeout_call(fn,start=a.strftime("%Y-%m-%d"),end=b.strftime("%Y-%m-%d"),interval="1D"))); last=None; break
+            except Exception as e:
+                last=e; time.sleep(1+k)
+        if last: errors.append(type(last).__name__)
+        a=b+pd.Timedelta(days=1)
+    if not parts: raise ConnectionError("Không lấy được dữ liệu")
+    return pd.concat(parts).drop_duplicates("date").sort_values("date"),errors
 
-    if not pieces:
-        detail = "; ".join(errors[:3])
-        raise ConnectionError(f"Không lấy được dữ liệu trong toàn bộ khoảng thời gian. {detail}")
+def features(df):
+    x=df.copy(); c=x.close
+    x["strength"]=(c.pct_change(63)*.4+c.pct_change(126)*.2+c.pct_change(189)*.2+c.pct_change(252)*.2)*100
+    x["roro"]=x.strength-x.strength.rolling(49,min_periods=49).mean()
+    lr=np.log(x.high/x.low); x["parkinson_vol"]=np.sqrt(lr.pow(2).rolling(22,min_periods=22).mean()/(4*np.log(2))*252)*100
+    m=x.parkinson_vol.rolling(252,min_periods=60).mean(); s=x.parkinson_vol.rolling(252,min_periods=60).std().replace(0,np.nan)
+    x["stress_z"]=(x.parkinson_vol-m)/s; x["stress_score"]=50+10*x.stress_z.clip(-5,5)
+    x["regime"]=np.select([x.roro>0,x.stress_z>=1.5,x.stress_z<.5],["EXPANSION","HIGH STRESS RISK OFF","CORRECTION"],default="TRANSITION")
+    x.loc[(x.roro>0)&(x.stress_z>=.5),"regime"]="FRAGILE RALLY"
+    return x
 
-    out = pd.concat(pieces, ignore_index=True)
-    out = out.drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
-    return out, errors
-
-
-def get_vn30_symbols():
-    try:
-        listing = Reference().equity.list_by_group("VN30")
-        cols = {str(c).lower(): c for c in listing.columns}
-        symbol_col = cols.get("symbol") or cols.get("ticker") or cols.get("code")
-        if symbol_col is not None:
-            symbols = listing[symbol_col].dropna().astype(str).str.upper().unique().tolist()
-            if len(symbols) >= 20:
-                return symbols, "Danh sách tham chiếu VN30 hiện tại"
-    except Exception:
-        pass
-    return VN30_FALLBACK, "Danh sách VN30 dự phòng"
-
-
-def fetch_index_history(market, symbol, start_date, end_date):
-    df, _ = fetch_history(market.index(symbol).ohlcv, start_date, end_date)
-    return df
-
-
-def fetch_equity_history(market, symbol, start_date, end_date, progress_callback=None):
-    return fetch_history(market.equity(symbol).ohlcv, start_date, end_date, progress_callback=progress_callback)
-
-
-def calculate_features(df, level=49, park_window=22, stress_window=252):
-    out = df.copy()
-    close = out["close"]
-    out["strength"] = (close.pct_change(63) * 0.4 + close.pct_change(126) * 0.2 + close.pct_change(189) * 0.2 + close.pct_change(252) * 0.2) * 100
-    out["roro_equal"] = out["strength"].rolling(level, min_periods=level).mean()
-    out["roro"] = out["strength"] - out["roro_equal"]
-    out["trend_state"] = np.select([out["roro"] > 0, out["roro"] < 0], ["RISK ON", "RISK OFF"], default="TRUNG TÍNH")
-    log_range = np.log(out["high"] / out["low"])
-    out["parkinson_vol"] = np.sqrt(log_range.pow(2).rolling(park_window, min_periods=park_window).mean() / (4 * np.log(2)) * 252) * 100
-    base = out["parkinson_vol"].rolling(stress_window, min_periods=max(60, park_window)).mean()
-    std = out["parkinson_vol"].rolling(stress_window, min_periods=max(60, park_window)).std().replace(0, np.nan)
-    out["stress_z"] = (out["parkinson_vol"] - base) / std
-    out["stress_score"] = 50 + 10 * out["stress_z"].clip(-5, 5)
-    out["stress_state"] = np.select([out["stress_z"] >= 1.5, out["stress_z"] >= 0.5, out["stress_z"] <= -0.5], ["CAO", "TĂNG", "THẤP"], default="BÌNH THƯỜNG")
-    return out
-
-
-def build_breadth(market, start_date, end_date):
-    symbols, source = get_vn30_symbols()
-    breadth_start = max(pd.Timestamp(start_date), pd.Timestamp(end_date) - pd.DateOffset(years=3)).date()
-    series, failed, partial = {}, [], []
-    progress = st.progress(0, text="Đang lấy dữ liệu Breadth")
-    status = st.empty()
-
-    for i, symbol in enumerate(symbols, 1):
-        status.caption(f"Đang xử lý {i}/{len(symbols)}: {symbol}")
-        def update_chunk(n, total, a, b):
-            progress.progress((i - 1 + n / total) / len(symbols), text=f"Breadth {i}/{len(symbols)}: {symbol} | đoạn {n}/{total}")
-        try:
-            df, errors = fetch_equity_history(market, symbol, breadth_start, end_date, update_chunk)
-            if len(df) >= 20:
-                series[symbol] = df.set_index("date")["close"].rename(symbol)
-                if errors:
-                    partial.append(f"{symbol}: thiếu {len(errors)} đoạn")
-            else:
-                failed.append(f"{symbol}: không đủ dữ liệu")
-        except Exception as exc:
-            failed.append(f"{symbol}: {type(exc).__name__}")
-        progress.progress(i / len(symbols), text=f"Breadth {i}/{len(symbols)}: {symbol}")
-
-    progress.empty()
-    status.empty()
-    if len(series) < 10:
-        raise ValueError("Không đủ dữ liệu cổ phiếu để tính Breadth")
-
-    prices = pd.DataFrame(series).sort_index()
-    coverage = prices.notna().sum(axis=1).replace(0, np.nan)
-    ma20 = prices.rolling(20, min_periods=20).mean()
-    ma50 = prices.rolling(50, min_periods=50).mean()
-    ma200 = prices.rolling(200, min_periods=200).mean()
-    breadth = pd.DataFrame(index=prices.index)
-    breadth["breadth_coverage"] = coverage
-    breadth["pct_above_ma20"] = (prices > ma20).sum(axis=1) / prices.notna().sum(axis=1).replace(0, np.nan) * 100
-    breadth["pct_above_ma50"] = (prices > ma50).sum(axis=1) / prices.notna().sum(axis=1).replace(0, np.nan) * 100
-    breadth["pct_above_ma200"] = (prices > ma200).sum(axis=1) / prices.notna().sum(axis=1).replace(0, np.nan) * 100
-    ret = prices.pct_change()
-    breadth["pct_advancers"] = (ret > 0).sum(axis=1) / ret.notna().sum(axis=1).replace(0, np.nan) * 100
-    breadth["breadth_score"] = breadth[["pct_above_ma20", "pct_above_ma50", "pct_above_ma200", "pct_advancers"]].mean(axis=1)
-    breadth["breadth_state"] = np.select([breadth["breadth_score"] >= 70, breadth["breadth_score"] >= 55, breadth["breadth_score"] >= 45, breadth["breadth_score"] >= 30], ["RẤT RỘNG", "RỘNG", "TRUNG TÍNH", "HẸP"], default="RẤT HẸP")
-    meta = {"symbols": len(series), "failed": failed, "partial": partial, "source": source, "start": breadth_start, "requested": len(symbols)}
-    return breadth.reset_index().rename(columns={"index": "date"}), meta
-
-
-def classify_regime(row):
-    if pd.isna(row["roro"]) or pd.isna(row["stress_score"]):
-        return "CHƯA ĐỦ DỮ LIỆU"
-    breadth = row.get("breadth_state", np.nan)
-    if pd.notna(breadth):
-        if row["roro"] > 0 and breadth in ["RẤT RỘNG", "RỘNG"] and row["stress_z"] < 0.5: return "EXPANSION"
-        if row["roro"] > 0 and (breadth in ["HẸP", "RẤT HẸP"] or row["stress_z"] >= 0.5): return "FRAGILE RALLY"
-        if row["roro"] <= 0 and breadth == "RẤT HẸP" and row["stress_z"] >= 1.5: return "HIGH STRESS RISK OFF"
-        if row["roro"] <= 0 and breadth in ["HẸP", "RẤT HẸP"]: return "CORRECTION"
-        return "TRANSITION"
-    if row["roro"] > 0 and row["stress_z"] < 0.5: return "EXPANSION"
-    if row["roro"] > 0: return "FRAGILE RALLY"
-    if row["stress_z"] >= 1.5: return "HIGH STRESS RISK OFF"
-    if row["stress_z"] < 0.5: return "CORRECTION"
-    return "TRANSITION"
-
-
-def merge_regime(df, breadth=None):
-    out = df.copy()
-    if breadth is not None: out = out.merge(breadth, on="date", how="left")
-    else:
-        out["breadth_state"] = np.nan
-        out["breadth_score"] = np.nan
-    out["regime"] = out.apply(classify_regime, axis=1)
-    return out
-
-
-def regime_validation(df):
-    test = df[["regime", "close"]].copy()
-    for horizon in [5, 10, 20]: test[f"forward_{horizon}"] = (test["close"].shift(-horizon) / test["close"] - 1) * 100
-    rows = []
-    for regime, group in test.groupby("regime"):
-        if regime == "CHƯA ĐỦ DỮ LIỆU": continue
-        row = {"Regime": regime, "Số quan sát": len(group)}
-        for horizon in [5, 10, 20]:
-            x = group[f"forward_{horizon}"].dropna()
-            row[f"T{horizon} lợi suất TB %"] = x.mean()
-            row[f"Tỷ lệ dương T{horizon} %"] = (x > 0).mean() * 100 if len(x) else np.nan
+def validation(x):
+    z=x[["regime","close"]].copy(); rows=[]
+    for h in [5,10,20]:z[f"f{h}"]=(z.close.shift(-h)/z.close-1)*100
+    for r,g in z.groupby("regime"):
+        if r=="CHƯA ĐỦ DỮ LIỆU":continue
+        row={"Regime":r,"Số quan sát":len(g)}
+        for h in [5,10,20]:
+            a=g[f"f{h}"].dropna(); row[f"T{h} lợi suất TB %"]=a.mean(); row[f"Tỷ lệ dương T{h} %"]=(a>0).mean()*100
         rows.append(row)
     return pd.DataFrame(rows)
 
+def symbols():
+    try:
+        d=Reference().equity.list_by_group("VN30"); col=next(c for c in d.columns if str(c).lower() in ["symbol","ticker","code"])
+        s=d[col].dropna().astype(str).str.upper().unique().tolist()
+        if len(s)>=20:return s[:30]
+    except Exception:pass
+    return VN30_FALLBACK
 
-def latest_text(value, fmt): return "Chưa đủ dữ liệu" if pd.isna(value) else fmt.format(value)
-
-
-def show_market(name, df):
-    latest = df.iloc[-1]
-    st.subheader(name)
-    c1,c2,c3,c4,c5 = st.columns(5)
-    c1.metric("Đóng cửa", latest_text(latest["close"], "{:,.2f}"))
-    c2.metric("RORO", latest_text(latest["roro"], "{:.2f}"))
-    c3.metric("Stress", latest_text(latest["stress_score"], "{:.1f}"))
-    c4.metric("Breadth", latest_text(latest.get("breadth_score", np.nan), "{:.1f}"))
-    c5.metric("Regime", latest["regime"])
-    chart = df.set_index("date")
-    tabs = st.tabs(["Tổng quan","Trend","Stress","Breadth","Kiểm định"])
-    with tabs[0]: st.line_chart(chart[["close"]].dropna(), use_container_width=True)
-    with tabs[1]: st.line_chart(chart[["roro"]].dropna(), use_container_width=True)
-    with tabs[2]: st.line_chart(chart[["parkinson_vol","stress_score"]].dropna(how="all"), use_container_width=True)
-    with tabs[3]:
-        cols=[c for c in ["pct_above_ma20","pct_above_ma50","pct_above_ma200","pct_advancers","breadth_score"] if c in chart.columns]
-        if cols: st.line_chart(chart[cols].dropna(how="all"), use_container_width=True)
-        else: st.info("Chưa có dữ liệu Breadth.")
-    with tabs[4]:
-        st.dataframe(regime_validation(df).round(4), use_container_width=True, hide_index=True)
-        st.caption("T5, T10, T20 là lợi suất trung bình phần trăm sau 5, 10, 20 phiên. Đây là kiểm định mô tả trên cùng tập dữ liệu.")
+def current_breadth(market,end):
+    syms=symbols(); series={}; failed=[]; p=st.progress(0,text="Đang lấy Breadth VN30 hiện tại")
+    start=pd.Timestamp(end)-pd.Timedelta(days=430)
+    for i,sym in enumerate(syms,1):
+        try:
+            d,_=history(market.equity(sym).ohlcv,start,end,retries=1)
+            if len(d)>=200:series[sym]=d.set_index("date").close
+            else:failed.append(sym)
+        except Exception:failed.append(sym)
+        p.progress(i/30,text=f"Breadth hiện tại {i}/30: {sym}")
+    p.empty()
+    px=pd.DataFrame(series).sort_index(); px=px.tail(200); last=px.iloc[-1]; valid=last.notna(); n=int(valid.sum())
+    ma20=px.rolling(20,min_periods=20).mean().iloc[-1]; ma50=px.rolling(50,min_periods=50).mean().iloc[-1]; ma200=px.rolling(200,min_periods=200).mean().iloc[-1]
+    adv=(pd.DataFrame(series).pct_change().iloc[-1][valid]>0).mean()*100
+    vals=[(last[valid]>ma20[valid]).mean()*100,(last[valid]>ma50[valid]).mean()*100,(last[valid]>ma200[valid]).mean()*100,adv]
+    score=float(np.nanmean(vals)); state="RẤT RỘNG" if score>=70 else "RỘNG" if score>=55 else "TRUNG TÍNH" if score>=45 else "HẸP" if score>=30 else "RẤT HẸP"
+    return {"n":n,"failed":failed,"ma20":vals[0],"ma50":vals[1],"ma200":vals[2],"adv":adv,"score":score,"state":state,"date":px.index[-1]}
 
 st.title("Vietnam Market Regime")
-st.caption("Khung phân tích chế độ thị trường Việt Nam")
-st.write("Trend và Stress đã có thể quan sát và kiểm định mô tả. Breadth là lớp nghiên cứu tiếp theo. Regime chưa phải tín hiệu giao dịch.")
+st.caption("Trend và Stress được kiểm định lịch sử. Breadth chỉ đánh giá trạng thái hiện tại của VN30.")
 with st.sidebar:
-    st.header("Cấu hình dữ liệu")
-    api_key=st.text_input("API key VNStock", type="password")
-    start_date=st.date_input("Từ ngày", value=date(2015,1,1))
-    end_date=st.date_input("Đến ngày", value=date.today())
-    enable_breadth=st.checkbox("Tính Breadth VN30", value=True)
-    run=st.button("Lấy dữ liệu và phân tích", type="primary", use_container_width=True)
-
+    key=st.text_input("API key VNStock",type="password"); start=st.date_input("Từ ngày",date(2015,1,1)); end=st.date_input("Đến ngày",date.today()); use_b=st.checkbox("Tính Breadth VN30 hiện tại",True); run=st.button("Lấy dữ liệu và phân tích",type="primary")
 if run:
-    if start_date >= end_date: st.error("Ngày bắt đầu phải trước ngày kết thúc."); st.stop()
-    if not api_key.strip(): st.error("Vui lòng nhập API key VNStock."); st.stop()
     try:
-        with st.status("Đang kết nối và phân tích", expanded=True) as status:
-            register_user(api_key=api_key.strip())
-            market=Market()
-            raw_results={}
-            for symbol in ["VNINDEX","VN30"]:
-                st.write(f"Đang lấy dữ liệu {symbol}")
-                raw_results[symbol]=calculate_features(fetch_index_history(market,symbol,start_date,end_date))
-            breadth=meta=None
-            if enable_breadth:
-                st.write("Đang xây Breadth từ VN30")
-                breadth,meta=build_breadth(market,start_date,end_date)
-                st.write(f"Breadth hoàn tất: {meta['symbols']}/{meta['requested']} mã hợp lệ")
-                if meta["failed"]: st.warning("Không lấy được: " + ", ".join(meta["failed"]))
-                if meta["partial"]: st.info("Dữ liệu một phần: " + ", ".join(meta["partial"]))
-            results={name:merge_regime(df,breadth) for name,df in raw_results.items()}
-            status.update(label="Hoàn tất phân tích", state="complete")
-        st.session_state["market_regime_results"]=results
-        st.session_state["breadth_meta"]=meta
-        st.success("Đã lấy dữ liệu và tính toán thành công.")
-    except Exception as exc:
-        st.error(f"Không thể hoàn tất quá trình lấy dữ liệu: {type(exc).__name__}: {exc}")
-        st.stop()
-
-results=st.session_state.get("market_regime_results")
-if results:
-    meta=st.session_state.get("breadth_meta")
-    if meta: st.info(f"Breadth: {meta['symbols']}/{meta['requested']} mã. Bắt đầu từ {meta['start']}.")
-    for name in ["VNINDEX","VN30"]: show_market(name,results[name])
-    st.divider(); st.header("Lộ trình mô hình")
-    st.write("Trend và Stress đã có thể quan sát và kiểm định mô tả. Breadth đang được kiểm tra bằng dữ liệu VN30 hiện tại. Bước tiếp theo là xây thành phần lịch sử hoặc Breadth toàn thị trường trước khi cố định Regime.")
-else:
-    st.info("Nhập API key VNStock ở thanh bên, chọn khoảng thời gian và bấm Lấy dữ liệu và phân tích.")
+        register_user(api_key=key.strip()); m=Market(); res={}
+        for sym in ["VNINDEX","VN30"]:res[sym]=features(history(m.index(sym).ohlcv,start,end)[0])
+        st.session_state["res"]=res; st.session_state["breadth"]=current_breadth(m,end) if use_b else None
+    except Exception as e:st.error(f"Lỗi: {type(e).__name__}: {e}")
+if "res" in st.session_state:
+    for name,x in st.session_state.res.items():
+        st.header(name); a=x.iloc[-1]; c=st.columns(4); c[0].metric("Đóng cửa",f"{a.close:,.2f}"); c[1].metric("RORO",f"{a.roro:.2f}"); c[2].metric("Stress",f"{a.stress_score:.1f}"); c[3].metric("Regime",a.regime)
+        t=st.tabs(["Tổng quan","Trend","Stress","Kiểm định"])
+        with t[0]:st.line_chart(x.set_index("date")[["close"]])
+        with t[1]:st.line_chart(x.set_index("date")[["roro"]])
+        with t[2]:st.line_chart(x.set_index("date")[["parkinson_vol","stress_score"]].dropna(how="all"))
+        with t[3]:st.dataframe(validation(x).round(4),hide_index=True,use_container_width=True)
+    b=st.session_state.get("breadth")
+    if b:
+        st.divider(); st.header("Breadth VN30 hiện tại"); st.caption("Ảnh chụp của 30 cổ phiếu VN30 hiện tại, không dùng để mô phỏng lịch sử từ năm 2015.")
+        q=st.columns(5); q[0].metric("Trên MA20",f"{b['ma20']:.1f}%"); q[1].metric("Trên MA50",f"{b['ma50']:.1f}%"); q[2].metric("Trên MA200",f"{b['ma200']:.1f}%"); q[3].metric("Số mã tăng",f"{b['adv']:.1f}%"); q[4].metric("Breadth",f"{b['score']:.1f} | {b['state']}")
+        st.info(f"Dữ liệu ngày {b['date'].date()}: {b['n']}/30 mã có dữ liệu. Không lấy được: {', '.join(b['failed']) if b['failed'] else 'Không có'}")
+    st.divider(); st.header("Lộ trình mô hình"); st.write("Trend và Stress được kiểm định lịch sử từ năm 2015. Breadth hiện tại chỉ là lớp xác nhận trạng thái. Breadth lịch sử sẽ chỉ được xây khi có thành phần VN30 theo từng kỳ rà soát hoặc một vũ trụ thị trường lịch sử phù hợp.")
+else:st.info("Nhập API key, chọn khoảng thời gian và chạy phân tích.")
