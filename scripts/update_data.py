@@ -4,10 +4,16 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.vnstock_data import update_market_dataset
+from src.vnstock_data import incremental_update
+
+
+DATASETS = [
+    {"symbol": "VNINDEX", "dataset_name": "vnindex", "asset_type": "index"},
+    {"symbol": "VN30", "dataset_name": "vn30", "asset_type": "index"},
+]
 
 
 if __name__ == "__main__":
-    update_market_dataset("VNINDEX", name="vnindex")
-    update_market_dataset("VN30", name="vn30")
-    print("Updated VNINDEX and VN30 datasets.")
+    for item in DATASETS:
+        path = incremental_update(**item)
+        print(f"Updated {item['symbol']}: {path}")
