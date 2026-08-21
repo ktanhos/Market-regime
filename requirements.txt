@@ -4,3 +4,4 @@ numpy
 pyarrow
 vnstock
 plotly
+requests
