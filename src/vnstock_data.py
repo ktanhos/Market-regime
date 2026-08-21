@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -8,67 +8,48 @@ from .data import RAW_DIR, save_parquet, standardize_ohlcv
 
 
 class VNStockAdapter:
-    """Single access point for VNStock market data.
-
-    The adapter tries the current Market interface first and preserves the
-    underlying errors so deployment problems are visible instead of silently
-    falling through to an incompatible legacy call.
-    """
-
     def __init__(self, source: str = "VCI"):
         self.source = source
 
-    def fetch_index(self, symbol: str, start: str = "2010-01-01", end: Optional[str] = None) -> pd.DataFrame:
+    def _quote(self, symbol: str, start: str, end: Optional[str] = None) -> pd.DataFrame:
+        from vnstock.api.quote import Quote
+        q = Quote(symbol=symbol, source=self.source)
         errors = []
+        for method in ["history", "ohlcv"]:
+            try:
+                fn = getattr(q, method)
+                try:
+                    df = fn(start=start, end=end, interval="1D")
+                except TypeError:
+                    df = fn(start=start, end=end)
+                return standardize_ohlcv(df)
+            except Exception as exc:
+                errors.append(f"{method}: {type(exc).__name__}: {exc}")
+        raise ConnectionError(" | ".join(errors))
 
+    def fetch_equity(self, symbol: str, start: str, end: Optional[str] = None) -> pd.DataFrame:
         try:
-            from vnstock import Market
-            market = Market(source=self.source)
-            df = market.index(symbol).ohlcv(start=start, end=end)
-            return standardize_ohlcv(df)
+            return self._quote(symbol, start, end)
         except Exception as exc:
-            errors.append(f"Market interface: {type(exc).__name__}: {exc}")
+            raise ConnectionError(f"Không thể lấy dữ liệu {symbol} từ VNStock API mới: {exc}") from exc
 
+    def fetch_index(self, symbol: str, start: str, end: Optional[str] = None) -> pd.DataFrame:
         try:
-            from vnstock import Vnstock
-            stock = Vnstock().stock(symbol=symbol, source=self.source)
-            df = stock.quote.history(start=start, end=end, interval="1D")
-            return standardize_ohlcv(df)
+            return self._quote(symbol, start, end)
         except Exception as exc:
-            errors.append(f"Legacy interface: {type(exc).__name__}: {exc}")
-
-        detail = " | ".join(errors)
-        raise ConnectionError(
-            f"Không thể lấy dữ liệu {symbol} từ VNStock. {detail}"
-        )
-
-    def fetch_equity(self, symbol: str, start: str = "2010-01-01", end: Optional[str] = None) -> pd.DataFrame:
-        errors = []
-
-        try:
-            from vnstock import Market
-            market = Market(source=self.source)
-            df = market.equity(symbol).ohlcv(start=start, end=end)
-            return standardize_ohlcv(df)
-        except Exception as exc:
-            errors.append(f"Market interface: {type(exc).__name__}: {exc}")
-
-        try:
-            from vnstock import Vnstock
-            stock = Vnstock().stock(symbol=symbol, source=self.source)
-            df = stock.quote.history(start=start, end=end, interval="1D")
-            return standardize_ohlcv(df)
-        except Exception as exc:
-            errors.append(f"Legacy interface: {type(exc).__name__}: {exc}")
-
-        detail = " | ".join(errors)
-        raise ConnectionError(
-            f"Không thể lấy dữ liệu {symbol} từ VNStock. {detail}"
-        )
+            raise ConnectionError(f"Không thể lấy dữ liệu {symbol} từ VNStock API mới: {exc}") from exc
 
 
-def update_market_dataset(symbol: str, dataset_name: Optional[str] = None, asset_type: str = "index", start: str = "2010-01-01", end: Optional[str] = None, source: str = "VCI") -> str:
+def _history_start(asset_type: str) -> str:
+    if asset_type == "index":
+        return (date.today() - timedelta(days=365 * 8)).isoformat()
+    return (date.today() - timedelta(days=365 * 1)).isoformat()
+
+
+def update_market_dataset(symbol: str, dataset_name: Optional[str] = None, asset_type: str = "index", start: Optional[str] = None, end: Optional[str] = None, source: str = "VCI") -> str:
     adapter = VNStockAdapter(source=source)
+    start = start or _history_start(asset_type)
+    end = end or date.today().isoformat()
     if asset_type == "index":
         df = adapter.fetch_index(symbol, start=start, end=end)
     elif asset_type == "equity":
@@ -87,15 +68,4 @@ def incremental_update(symbol: str, dataset_name: str, asset_type: str = "index"
     old = standardize_ohlcv(pd.read_parquet(data_path))
     last_date = pd.to_datetime(old["date"]).max()
     start = (last_date - timedelta(days=overlap_days)).strftime("%Y-%m-%d")
-    adapter = VNStockAdapter(source=source)
-    if asset_type == "index":
-        new = adapter.fetch_index(symbol, start=start)
-    elif asset_type == "equity":
-        new = adapter.fetch_equity(symbol, start=start)
-    else:
-        raise ValueError("asset_type must be index or equity")
-
-    combined = pd.concat([old, new], ignore_index=True)
-    combined = standardize_ohlcv(combined)
-    save_parquet(combined, dataset_name, data_dir=RAW_DIR)
-    return str(data_path)
+    return update_market_dataset(symbol, dataset_name, asset_type, start=start, source=source)
