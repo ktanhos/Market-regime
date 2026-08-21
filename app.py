@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import sys
 import numpy as np
 import pandas as pd
@@ -9,6 +10,9 @@ sys.path.insert(0, str(ROOT))
 
 from src.local_data import load_raw
 from src.cached_breadth import build_cached_breadth
+from src.refresh_data import refresh_market
+from src.universe import VN30_SYMBOLS
+from src.github_store import upload_tree
 
 st.set_page_config(page_title='Trạng thái thị trường Việt Nam', page_icon='📊', layout='wide')
 
@@ -43,6 +47,33 @@ def regime(t,s):
     if t=='TÍCH CỰC' and s in ['CAO','RẤT CAO']: return 'TĂNG NHƯNG BIẾN ĐỘNG CAO','Xu hướng tích cực nhưng mức rủi ro đã tăng.','Duy trì tỷ trọng có chọn lọc và kiểm soát rủi ro.'
     return 'GIAI ĐOẠN CHUYỂN TIẾP','Xu hướng và biến động chưa cùng xác nhận một trạng thái rõ ràng.','Duy trì mức rủi ro vừa phải và chờ thêm tín hiệu xác nhận.'
 
+st.sidebar.header('Dữ liệu thị trường')
+st.sidebar.caption('Dashboard chỉ gọi API khi bấm cập nhật. Các lần mở thông thường chỉ đọc dữ liệu đã lưu.')
+repo = 'ktanhos/Market-regime'
+branch = 'main'
+token = os.getenv('GITHUB_TOKEN', '')
+if st.sidebar.button('Cập nhật dữ liệu đến hôm nay', use_container_width=True):
+    if not token:
+        st.sidebar.error('Chưa cấu hình GITHUB_TOKEN trong Streamlit Secrets.')
+    else:
+        progress = st.sidebar.progress(0, text='Đang cập nhật VNINDEX và VN30...')
+        with st.spinner('Đang gọi API theo phần dữ liệu còn thiếu...'):
+            result = refresh_market(VN30_SYMBOLS)
+            progress.progress(75, text='Đang lưu dữ liệu mới...')
+            raw_root = ROOT/'data'/'raw'
+            processed_root = ROOT/'data'/'processed'
+            try:
+                n1 = upload_tree(token, repo, branch, raw_root, 'data/raw', 'Cập nhật dữ liệu thị trường') if raw_root.exists() else 0
+                n2 = upload_tree(token, repo, branch, processed_root, 'data/processed', 'Cập nhật chỉ số thị trường') if processed_root.exists() else 0
+                progress.progress(100, text='Hoàn tất.')
+                st.cache_data.clear()
+                ok = int(result['success'].sum())
+                st.sidebar.success(f'Đã cập nhật {ok}/{len(result)} nguồn dữ liệu và lưu {n1+n2} tệp.')
+                if ok < len(result): st.sidebar.warning('Một số mã chưa cập nhật được. Có thể thử lại sau ít phút.')
+                st.rerun()
+            except Exception as exc:
+                st.sidebar.error(f'Lỗi khi lưu dữ liệu: {exc}')
+
 @st.cache_data(show_spinner=False)
 def load_all():
     idx=load_raw('VNINDEX')
@@ -52,15 +83,15 @@ def load_all():
     return idx,m
 
 idx,metrics=load_all()
-st.markdown("<div class='hero'><h1>Trạng thái thị trường Việt Nam</h1><div class='muted'>Ứng dụng mô tả thị trường hiện tại từ xu hướng VNINDEX, mức biến động và cấu trúc của nhóm VN30. Dashboard chỉ đọc dữ liệu đã lưu và không gọi API khi mở.</div></div>",unsafe_allow_html=True)
+st.markdown("<div class='hero'><h1>Trạng thái thị trường Việt Nam</h1><div class='muted'>Ứng dụng mô tả thị trường hiện tại từ xu hướng VNINDEX, mức biến động và cấu trúc của nhóm VN30. Dữ liệu được lưu cục bộ khi xem và chỉ gọi API khi bấm cập nhật.</div></div>",unsafe_allow_html=True)
 if idx is None or idx.empty:
-    st.error('Chưa có dữ liệu VNINDEX đã lưu trong data/raw.')
+    st.warning('Chưa có dữ liệu thị trường trong kho dữ liệu.')
+    st.info('Mở thanh bên và bấm Cập nhật dữ liệu đến hôm nay để tạo bộ dữ liệu đầu tiên.')
     st.stop()
 
 x=features(idx); r=x.iloc[-1]; t=r['trend']; s=r['stress']; title,text,advice=regime(t,s)
 b=build_cached_breadth()
 last=pd.Timestamp(r['time']).strftime('%d/%m/%Y')
-
 st.caption(f'Dữ liệu VNINDEX đến ngày {last}.')
 st.markdown(f"<div class='card'><div class='label'>ĐÁNH GIÁ CHUNG</div><div class='value {cls(title)}'>{title}</div><div class='muted'>{text}</div></div>",unsafe_allow_html=True)
 
@@ -70,21 +101,16 @@ for col,label,value,note in [(c1,'XU HƯỚNG VNINDEX',t,f'RORO: {r.roro:.2f}'),
 
 st.subheader('Cấu trúc rủi ro VN30')
 if metrics is not None and len(metrics):
-    m=metrics.iloc[-1]
-    a,c,d,e=st.columns(4)
-    a.metric('Phân hóa',f"{m.get('dispersion',np.nan):.2f}%",f"Phân vị 252 phiên: {m.get('dispersion_pct_252',np.nan):.0f}")
-    c.metric('Tập trung biến động',f"{m.get('top5_risk_share',np.nan):.1f}%",f"Phân vị 252 phiên: {m.get('top5_risk_share_pct_252',np.nan):.0f}")
+    m=metrics.iloc[-1]; a,c,d,e=st.columns(4)
+    a.metric('Phân hóa',f"{m.get('dispersion',np.nan):.2f}%")
+    c.metric('Tập trung biến động',f"{m.get('top5_risk_share',np.nan):.1f}%")
     d.metric('Số mã hiệu dụng',f"{m.get('effective_risk_names',np.nan):.1f}")
     e.metric('Dữ liệu hợp lệ',f"{b['valid_symbols']}/{b['symbols']}")
-else:
-    st.warning('Chưa có vn30_metrics_history.parquet.')
+else: st.warning('Chưa có dữ liệu cấu trúc VN30.')
 
 st.subheader('Quản trị danh mục')
 st.markdown(f"<div class='card'><div class='value {cls(title)}'>{title}</div><div class='muted'>{advice}</div></div>",unsafe_allow_html=True)
-
 with st.expander('Xem chi tiết VN30'):
     st.dataframe(b['details'],use_container_width=True,hide_index=True)
     st.dataframe(b['risk_table'],use_container_width=True,hide_index=True)
-    if b['failed']: st.caption('Thiếu dữ liệu: '+', '.join(b['failed']))
-
 st.caption('Ứng dụng hỗ trợ quan sát trạng thái thị trường và quản trị rủi ro. Không phải khuyến nghị mua bán.')
