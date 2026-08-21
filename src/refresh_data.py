@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
 from pathlib import Path
 import time
 import pandas as pd
@@ -12,37 +11,35 @@ RAW = ROOT / "data" / "raw"
 PROCESSED = ROOT / "data" / "processed"
 
 
-def _last_date(path: Path):
-    if not path.exists():
-        return None
-    df = pd.read_parquet(path)
-    for col in ["time", "date", "datetime"]:
-        if col in df.columns:
-            return pd.to_datetime(df[col]).max().date()
-    if isinstance(df.index, pd.DatetimeIndex):
-        return df.index.max().date()
-    return None
-
-
-def _start_for(path: Path, fallback_years: int = 12) -> str:
-    last = _last_date(path)
-    if last is None:
-        return (date.today() - timedelta(days=365 * fallback_years)).isoformat()
-    return (last - timedelta(days=10)).isoformat()
-
-
-def refresh_market(symbols: list[str], sleep_seconds: float = 1.1):
+def refresh_market(symbols: list[str], sleep_seconds: float = 1.1, progress_callback=None):
     RAW.mkdir(parents=True, exist_ok=True)
     PROCESSED.mkdir(parents=True, exist_ok=True)
-    jobs = [("VNINDEX", "vnindex", "index")] + [(s, s, "stock") for s in symbols]
+
+    jobs = [("VNINDEX", "vnindex", "index")] + [
+        (symbol, symbol.lower(), "equity") for symbol in symbols
+    ]
+
     results = []
-    for symbol, dataset, asset_type in jobs:
-        path = RAW / f"{dataset.lower()}.parquet"
-        start = _start_for(path)
+    total = len(jobs)
+
+    for i, (symbol, dataset, asset_type) in enumerate(jobs, start=1):
+        if progress_callback:
+            progress_callback(i, total, symbol)
+
         try:
-            incremental_update(symbol=symbol, dataset_name=dataset, asset_type=asset_type, start=start, end=date.today().isoformat())
-            results.append((symbol, True, start, ""))
+            path = incremental_update(
+                symbol=symbol,
+                dataset_name=dataset,
+                asset_type=asset_type,
+            )
+            results.append((symbol, True, path, ""))
         except Exception as exc:
-            results.append((symbol, False, start, str(exc)))
-        time.sleep(sleep_seconds)
-    return pd.DataFrame(results, columns=["symbol", "success", "start", "error"])
+            results.append((symbol, False, "", f"{type(exc).__name__}: {exc}"))
+
+        if i < total:
+            time.sleep(sleep_seconds)
+
+    return pd.DataFrame(
+        results,
+        columns=["symbol", "success", "path", "error"],
+    )
