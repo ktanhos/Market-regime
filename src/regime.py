@@ -43,11 +43,25 @@ BREADTH_STRONG = 55.0
 BREADTH_WEAK = 45.0
 
 _DESCRIPTIONS = {
-    FAVOURABLE: "Xu hướng VNINDEX tích cực, biến động chưa vượt mức thông thường và nhóm vốn hóa lớn có sự đồng thuận.",
-    WARNING: "Xu hướng vẫn tích cực nhưng biến động đã tăng hoặc độ lan tỏa của nhóm VN30 đang mỏng dần.",
-    TRANSITION: "Xu hướng và biến động chưa cùng xác nhận một trạng thái rõ ràng. Nhóm cổ phiếu lớn chưa tạo được đồng thuận.",
-    UNDER_PRESSURE: "Xu hướng suy yếu đi cùng biến động tăng hoặc độ lan tỏa yếu.",
-    STRESSED: "Xu hướng suy yếu và biến động ở vùng cao nhất so với chính thị trường này trong một năm qua.",
+    FAVOURABLE: (
+        "Xu hướng VNINDEX tích cực, mức biến động chưa vượt ngưỡng thông thường "
+        "và nhóm vốn hóa lớn đang đồng thuận."
+    ),
+    WARNING: (
+        "Thị trường vẫn tăng nhưng rủi ro đã cao hơn: biến động tăng lên hoặc "
+        "độ lan tỏa của nhóm VN30 đang mỏng dần."
+    ),
+    TRANSITION: (
+        "Xu hướng đang thay đổi nhưng mức biến động chưa xác nhận. "
+        "Nhóm cổ phiếu lớn chưa tạo ra sự đồng thuận rõ ràng."
+    ),
+    UNDER_PRESSURE: (
+        "Xu hướng suy yếu đi cùng biến động tăng hoặc độ lan tỏa yếu."
+    ),
+    STRESSED: (
+        "Xu hướng suy yếu và mức biến động đang ở vùng cao nhất so với chính "
+        "thị trường này trong một năm qua."
+    ),
     UNKNOWN: "Chưa đủ dữ liệu để mô tả trạng thái thị trường.",
 }
 

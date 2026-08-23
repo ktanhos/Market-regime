@@ -4,10 +4,6 @@ name: Check vnstock API
 # Không ghi dữ liệu, không commit.
 on:
   workflow_dispatch:
-  # Tạm bật để xác minh giao diện fetch_index_members/ProbeResult chạy thật. Gỡ ngay sau đó.
-  push:
-    branches:
-      - claude/market-regime-audit-lbavr0
 
 jobs:
   check:
