@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src import roro as trend_module
-from src import volatility as stress_module
+from src import trend as trend_module
+from src import stress as stress_module
 from src.breadth import BREADTH_UNKNOWN
 from src.concentration import CONCENTRATION_HIGH
 from src.dispersion import DISPERSION_HIGH

@@ -52,10 +52,28 @@ def _row(name: str, kind: str, frame: pd.DataFrame | None) -> dict:
     }
 
 
+def index_summary() -> dict:
+    """Số phiên và khoảng dữ liệu của hai chỉ số."""
+    rows = {}
+    for dataset, label in ((config.VNINDEX_DATASET, "VNINDEX"), (config.VN30_INDEX_DATASET, "VN30")):
+        frame = storage.load_index(dataset)
+        if frame is None or frame.empty:
+            rows[label] = {"sessions": 0, "first_date": None, "last_date": None}
+            continue
+        dates = pd.to_datetime(frame[DATE_COLUMN])
+        rows[label] = {
+            "sessions": int(len(frame)),
+            "first_date": dates.min(),
+            "last_date": dates.max(),
+        }
+    return rows
+
+
 def coverage_summary(universe: list[str]) -> dict:
     """Tổng quan độ phủ dữ liệu, dùng cho thẻ Chất lượng dữ liệu."""
     universe = sorted({s.upper() for s in universe})
     frames, missing = storage.load_stocks(universe)
+    indices = index_summary()
     index_frame = storage.load_index(config.VNINDEX_DATASET)
 
     last_dates = [
@@ -78,6 +96,7 @@ def coverage_summary(universe: list[str]) -> dict:
     universe_meta = storage.read_json(config.UNIVERSE_FILE) or {}
 
     return {
+        "indices": indices,
         "index_first_date": index_first,
         "index_last_date": index_last,
         "index_sessions": index_rows,
