@@ -1,20 +1,30 @@
-"""Lớp cô lập vnstock. Đây là module duy nhất được phép import vnstock.
+"""Lớp cô lập vnstock. Đây là module DUY NHẤT được phép import vnstock.
+
+Giao diện công khai của module, tầng trên chỉ được dùng đúng những hàm này::
+
+    fetch_history(symbol, start, end, asset_type)  -> FetchResult
+    fetch_index(symbol, start, end)                -> FetchResult
+    fetch_equity(symbol, start, end)               -> FetchResult
+    fetch_index_members(index)                     -> list[str]
+    connectivity_check()                           -> list[ProbeResult]
+
+``app.py`` không biết gì về cách vnstock hoạt động bên trong.
 
 API đang dùng (vnstock 4.x, giao diện chính thức hiện hành)::
 
     from vnstock import Quote, Listing
-    Quote(symbol="VNINDEX", source="VCI").history(start="2015-01-01", end="2026-08-22", interval="1D")
+    Quote(symbol="VNINDEX", source="VCI").history(start=..., end=..., interval="1D")
     Listing(source="VCI").symbols_by_group("VN30")
 
 Những API KHÔNG dùng và lý do:
 
-* ``Vnstock().stock(symbol=..., source=...)`` – lối vào cũ, chỉ còn là vỏ bọc.
+* ``Vnstock().stock(...)`` / ``Vnstock().index(...)`` – lối vào cũ, chỉ là vỏ bọc.
 * ``Market(source=...)`` – không phải giao diện lấy giá lịch sử.
 * ``Quote.ohlcv`` – trong vnstock 4.x đây chỉ là bí danh của ``Quote.history``
   (``ohlcv = history`` trong ``vnstock/api/quote.py``). Gọi lần lượt cả hai tên
-  như mã cũ chỉ nhân đôi số lượt gọi API chứ không tạo thêm cơ hội thành công.
+  chỉ nhân đôi số lượt gọi API chứ không tạo thêm cơ hội thành công.
 
-Giới hạn của nguồn dữ liệu, đọc trực tiếp từ gói đã cài:
+Giới hạn nguồn dữ liệu, đọc trực tiếp từ gói đã cài:
 
 * KBS (``vnstock/explorer/kbs/const.py::_INDEX_MAPPING``) chỉ hỗ trợ VNINDEX,
   HNXINDEX, UPCOMINDEX. KBS **không** lấy được chỉ số VN30.
@@ -28,14 +38,20 @@ Giới hạn của nguồn dữ liệu, đọc trực tiếp từ gói đã cài
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Callable, Sequence
 
 import pandas as pd
 
 from src import config
-from src.schema import DataQualityError, standardize_ohlcv
+from src.logging_config import get_logger
+from src.schema import CANONICAL_COLUMNS, DataQualityError, standardize_ohlcv
+
+logger = get_logger(__name__)
+
+ASSET_INDEX = "index"
+ASSET_STOCK = "stock"
 
 # --- Phân loại lỗi -----------------------------------------------------------
 
@@ -79,6 +95,7 @@ class FetchError(RuntimeError):
 
 
 def classify_error(exc: BaseException) -> str:
+    """Xếp loại lỗi để quyết định thử lại, đổi nguồn hay dừng hẳn."""
     text = f"{type(exc).__name__}: {exc}".lower()
     if isinstance(exc, DataQualityError):
         return EMPTY
@@ -115,7 +132,8 @@ def vnstock_version() -> str:
         from importlib.metadata import version
 
         return version("vnstock")
-    except Exception:
+    except Exception as exc:
+        logger.warning("Không đọc được phiên bản vnstock: %s", exc)
         return "không xác định"
 
 
@@ -144,17 +162,63 @@ def _listing_class():
 def sources_for(symbol: str, asset_type: str) -> tuple[str, ...]:
     """Thứ tự nguồn dữ liệu cho một mã, theo khả năng hỗ trợ thực tế."""
     symbol = symbol.upper()
-    if asset_type == "index":
+    if asset_type == ASSET_INDEX:
         return config.INDEX_SOURCES.get(symbol, (config.PRIMARY_SOURCE,))
     return (config.PRIMARY_SOURCE,) + tuple(config.FALLBACK_SOURCES)
 
 
 @dataclass
 class FetchResult:
+    """Kết quả một lần lấy dữ liệu thành công."""
+
     symbol: str
     frame: pd.DataFrame
     source: str
     attempts: int
+
+    @property
+    def rows(self) -> int:
+        return int(len(self.frame))
+
+    @property
+    def first_date(self) -> str:
+        return pd.to_datetime(self.frame["date"]).min().strftime("%Y-%m-%d")
+
+    @property
+    def last_date(self) -> str:
+        return pd.to_datetime(self.frame["date"]).max().strftime("%Y-%m-%d")
+
+    @property
+    def schema(self) -> list[str]:
+        return list(self.frame.columns)
+
+
+@dataclass
+class ProbeResult:
+    """Kết quả một phép thử kết nối, dùng cho màn hình chẩn đoán API."""
+
+    name: str
+    ok: bool
+    source: str = ""
+    rows: int = 0
+    first_date: str = ""
+    last_date: str = ""
+    schema: list[str] = field(default_factory=list)
+    detail: str = ""
+    kind: str = ""
+    error: str = ""
+
+    def as_dict(self) -> dict:
+        return {
+            "Mục kiểm tra": self.name,
+            "Kết quả": "SUCCESS" if self.ok else "FAILED",
+            "Nguồn": self.source,
+            "Số dòng": self.rows,
+            "Ngày đầu": self.first_date,
+            "Ngày cuối": self.last_date,
+            "Schema": ", ".join(self.schema),
+            "Lỗi": self.error,
+        }
 
 
 def _single_call(symbol: str, source: str, start: str, end: str) -> pd.DataFrame:
@@ -169,13 +233,19 @@ def fetch_history(
     symbol: str,
     start: str,
     end: str | None = None,
-    asset_type: str = "stock",
+    asset_type: str = ASSET_STOCK,
     sources: Sequence[str] | None = None,
     max_attempts: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     caller: Callable[..., pd.DataFrame] | None = None,
 ) -> FetchResult:
-    """Lấy lịch sử giá của một mã, tuần tự, có backoff, không retry vô hạn.
+    """Lấy lịch sử giá của một mã: tuần tự, có backoff, không thử lại vô hạn.
+
+    Thứ tự xử lý lỗi:
+
+    * ``rate_limited``          -> dừng ngay, ném lỗi để tầng trên hủy cả lượt chạy.
+    * ``permanent``/``dependency`` -> chuyển sang nguồn kế tiếp, không lặp lại nguồn cũ.
+    * ``transient``/``empty``   -> thử lại tối đa ``max_attempts`` lần với backoff mũ.
 
     ``caller`` chỉ dùng cho kiểm thử: nó thay thế lời gọi mạng thật.
     """
@@ -195,12 +265,16 @@ def fetch_history(
                 frame = call(symbol, source, start, end)
                 if frame.empty:
                     raise DataQualityError("Nguồn trả về 0 dòng")
+                logger.info(
+                    "Lấy %s từ %s: %d dòng (%s lượt gọi)", symbol, source, len(frame), attempts
+                )
                 return FetchResult(symbol=symbol, frame=frame, source=source, attempts=attempts)
             except FetchError:
                 raise
             except Exception as exc:
                 kind = classify_error(exc)
                 errors.append(f"{source}: {type(exc).__name__}: {str(exc)[:200]}")
+                logger.warning("Lỗi lấy %s từ %s [%s]: %s", symbol, source, kind, str(exc)[:200])
                 if kind == RATE_LIMITED:
                     raise FetchError(
                         f"{friendly_message(RATE_LIMITED)} ({source})",
@@ -226,82 +300,116 @@ def fetch_history(
     )
 
 
+def fetch_index(symbol: str, start: str, end: str | None = None, **kwargs) -> FetchResult:
+    """Lịch sử giá của một chỉ số (VNINDEX, VN30...)."""
+    return fetch_history(symbol, start=start, end=end, asset_type=ASSET_INDEX, **kwargs)
+
+
+def fetch_equity(symbol: str, start: str, end: str | None = None, **kwargs) -> FetchResult:
+    """Lịch sử giá của một cổ phiếu."""
+    return fetch_history(symbol, start=start, end=end, asset_type=ASSET_STOCK, **kwargs)
+
+
 def default_start(asset_type: str, last_date: pd.Timestamp | None = None) -> str:
     """Ngày bắt đầu cần yêu cầu từ API.
 
-    * Chưa có dữ liệu: chỉ số lấy từ ``INDEX_HISTORY_START`` để đủ ROC252 và
-      z-score 252 phiên; cổ phiếu chỉ lấy đủ để tính MA200 của chính nó.
-    * Đã có dữ liệu: lấy từ ngày cuối cùng lùi lại ``INCREMENTAL_OVERLAP_DAYS``.
+    * Chưa có dữ liệu: chỉ số lấy 8 năm để đủ ROC252 và phân vị 252 phiên;
+      cổ phiếu chỉ lấy 430 ngày, vừa đủ tính MA200 của chính nó.
+    * Đã có dữ liệu: lấy từ ngày cuối cùng lùi lại ``INCREMENTAL_OVERLAP_DAYS``
+      để bắt các phiên bị điều chỉnh muộn, không tải lại toàn bộ lịch sử.
     """
     if last_date is not None and pd.notna(last_date):
         start = pd.Timestamp(last_date) - timedelta(days=config.INCREMENTAL_OVERLAP_DAYS)
         return start.strftime("%Y-%m-%d")
-    if asset_type == "index":
-        return config.INDEX_HISTORY_START
-    return (date.today() - timedelta(days=config.STOCK_HISTORY_CALENDAR_DAYS)).isoformat()
+    if asset_type == ASSET_INDEX:
+        return config.index_history_start()
+    return config.stock_history_start()
 
 
-def fetch_vn30_constituents(source: str = config.PRIMARY_SOURCE) -> list[str]:
-    """Danh sách VN30 **tại thời điểm gọi**.
+def fetch_index_members(index: str = "VN30", source: str = config.PRIMARY_SOURCE) -> list[str]:
+    """Danh sách thành phần của một chỉ số **tại thời điểm gọi**.
 
-    Đây là ảnh chụp hiện tại. Nó không nói gì về thành phần VN30 trong quá khứ
-    và không được dùng để tái tạo lịch sử rổ VN30.
+    Đây là ảnh chụp hiện tại. Nó không nói gì về thành phần của chỉ số trong quá
+    khứ và không được dùng để tái tạo lịch sử rổ.
     """
     Listing = _listing_class()
     try:
-        series = Listing(source=source).symbols_by_group("VN30")
+        series = Listing(source=source).symbols_by_group(index)
     except Exception as exc:
+        logger.warning("Không lấy được danh sách %s: %s", index, str(exc)[:200])
         raise FetchError(
-            f"Không lấy được danh sách VN30: {type(exc).__name__}: {str(exc)[:200]}",
+            f"Không lấy được danh sách {index}: {type(exc).__name__}: {str(exc)[:200]}",
             classify_error(exc),
-            symbol="VN30",
+            symbol=index,
             source=source,
         ) from exc
 
-    symbols = sorted({str(s).strip().upper() for s in pd.Series(series).dropna().tolist() if str(s).strip()})
+    symbols = sorted(
+        {str(s).strip().upper() for s in pd.Series(series).dropna().tolist() if str(s).strip()}
+    )
     if len(symbols) < 20:
         raise FetchError(
-            f"Danh sách VN30 trả về chỉ có {len(symbols)} mã, không hợp lý.",
+            f"Danh sách {index} trả về chỉ có {len(symbols)} mã, không hợp lý.",
             EMPTY,
-            symbol="VN30",
+            symbol=index,
             source=source,
         )
+    logger.info("Danh sách %s hiện có %d mã", index, len(symbols))
     return symbols
 
 
-def connectivity_check(sleep: Callable[[float], None] = time.sleep) -> list[dict]:
-    """Kiểm tra kết nối tối thiểu: một chỉ số và một cổ phiếu.
+def connectivity_check(sleep: Callable[[float], None] = time.sleep) -> list[ProbeResult]:
+    """Chẩn đoán API: một chỉ số, một cổ phiếu và danh sách thành phần VN30.
 
-    Nếu hai phép thử này không chạy được thì không nên gọi tiếp 30 mã còn lại.
+    Nếu ba phép thử này không chạy được thì không nên gọi tiếp 30 mã còn lại.
     """
     start = (date.today() - timedelta(days=30)).isoformat()
     end = date.today().isoformat()
-    checks = [("VNINDEX", "index"), ("FPT", "stock")]
-    results: list[dict] = []
+    results: list[ProbeResult] = []
 
-    for i, (symbol, asset_type) in enumerate(checks):
-        row = {"symbol": symbol, "asset_type": asset_type}
+    for symbol, asset_type in (("VNINDEX", ASSET_INDEX), ("FPT", ASSET_STOCK)):
         try:
             result = fetch_history(symbol, start=start, end=end, asset_type=asset_type, sleep=sleep)
-            row.update(
-                ok=True,
-                source=result.source,
-                rows=int(len(result.frame)),
-                last_date=pd.to_datetime(result.frame["date"]).max().strftime("%Y-%m-%d"),
-                message="",
-                kind="",
+            results.append(
+                ProbeResult(
+                    name=symbol,
+                    ok=True,
+                    source=result.source,
+                    rows=result.rows,
+                    first_date=result.first_date,
+                    last_date=result.last_date,
+                    schema=result.schema,
+                    detail=f"{result.rows} phiên tới {result.last_date}",
+                )
             )
         except FetchError as exc:
-            row.update(
-                ok=False,
-                source=exc.source,
-                rows=0,
-                last_date="",
-                message=str(exc)[:300],
-                kind=exc.kind,
+            results.append(
+                ProbeResult(name=symbol, ok=False, source=exc.source, kind=exc.kind,
+                            error=str(exc)[:300], detail=friendly_message(exc.kind))
             )
-        results.append(row)
-        if i < len(checks) - 1:
-            sleep(config.REQUEST_DELAY_SECONDS)
+        sleep(config.REQUEST_DELAY_SECONDS)
+
+    try:
+        members = fetch_index_members("VN30")
+        results.append(
+            ProbeResult(
+                name="VN30 Universe",
+                ok=True,
+                source=config.PRIMARY_SOURCE,
+                rows=len(members),
+                schema=["symbol"],
+                detail=", ".join(members),
+            )
+        )
+    except FetchError as exc:
+        results.append(
+            ProbeResult(name="VN30 Universe", ok=False, source=exc.source, kind=exc.kind,
+                        error=str(exc)[:300], detail=friendly_message(exc.kind))
+        )
 
     return results
+
+
+def expected_schema() -> list[str]:
+    """Lược đồ mà mọi khung dữ liệu trả về phải tuân theo."""
+    return list(CANONICAL_COLUMNS)
