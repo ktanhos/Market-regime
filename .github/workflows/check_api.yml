@@ -4,10 +4,6 @@ name: Check vnstock API
 # Không ghi dữ liệu, không commit.
 on:
   workflow_dispatch:
-  # Tạm thời bật để xác minh giao diện vnstock trên nhánh rebuild. Sẽ gỡ ngay sau đó.
-  push:
-    branches:
-      - claude/market-regime-audit-lbavr0
 
 jobs:
   check:

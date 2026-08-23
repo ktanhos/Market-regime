@@ -16,11 +16,13 @@ from datetime import date
 from src import config, storage
 
 # Danh sách dự phòng dùng khi chưa từng cập nhật và chưa gọi được API.
-# Đây là ảnh chụp thủ công, có thể lệch so với rổ hiện hành.
+# Ảnh chụp ngày 2026-08-23 từ Listing(source="VCI").symbols_by_group("VN30").
+# Đây vẫn chỉ là ảnh chụp: rổ VN30 được xem xét lại định kỳ nên danh sách này
+# sẽ cũ đi. Nguồn đúng là data/reference/vn30_universe.json sau mỗi lần cập nhật.
 FALLBACK_VN30 = [
-    "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
-    "LPB", "MBB", "MSN", "MWG", "PLX", "SAB", "SHB", "SSB", "SSI", "STB",
-    "TCB", "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VRE",
+    "ACB", "BID", "BSR", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG", "LPB",
+    "MBB", "MCH", "MSN", "MWG", "SAB", "SHB", "SSB", "SSI", "STB", "TCB",
+    "TCX", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VPL", "VRE",
 ]
 
 
