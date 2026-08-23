@@ -6,6 +6,7 @@ Không có ngưỡng nào được suy ra từ mô hình học máy hay từ k�
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,12 +46,30 @@ BACKOFF_BASE_SECONDS = 2.0
 BACKOFF_MAX_SECONDS = 16.0
 
 # --- Độ dài lịch sử cần lấy --------------------------------------------------
-# VNINDEX cần đủ dài cho ROC252 cộng cửa sổ trung bình 49 phiên và z-score 252 phiên.
-INDEX_HISTORY_START = "2015-01-01"
+# VNINDEX là dữ liệu nền dài hạn: đủ cho ROC252, trung bình 49 phiên của Strength
+# và phân vị 252 phiên của biến động.
+INDEX_HISTORY_YEARS = 8
 # Cổ phiếu VN30 chỉ cần đủ để tính MA200 của chính cổ phiếu đó cộng biên an toàn.
-STOCK_HISTORY_CALENDAR_DAYS = 520
+# 430 ngày lịch (khoảng 285 phiên) phủ MA200 và lợi suất 20 phiên.
+STOCK_HISTORY_CALENDAR_DAYS = 430
 # Khi cập nhật tăng dần, lấy chồng lấn để bắt các phiên bị điều chỉnh muộn.
-INCREMENTAL_OVERLAP_DAYS = 20
+INCREMENTAL_OVERLAP_DAYS = 12
+
+
+def index_history_start(today: date | None = None) -> str:
+    """Ngày bắt đầu cho lần tải chỉ số đầu tiên."""
+    today = today or date.today()
+    return (today - timedelta(days=365 * INDEX_HISTORY_YEARS)).isoformat()
+
+
+def stock_history_start(today: date | None = None) -> str:
+    """Ngày bắt đầu cho lần tải cổ phiếu đầu tiên."""
+    today = today or date.today()
+    return (today - timedelta(days=STOCK_HISTORY_CALENDAR_DAYS)).isoformat()
+
+# --- Ghi log -----------------------------------------------------------------
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+LOG_LEVEL = "INFO"
 
 # --- Trend / RORO ------------------------------------------------------------
 RORO_HORIZONS = ((63, 0.4), (126, 0.2), (189, 0.2), (252, 0.2))

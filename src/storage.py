@@ -19,10 +19,14 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from src import config
+from src.logging_config import get_logger
 from src.schema import DATE_COLUMN, merge_history, standardize_ohlcv, validate_frame
+
+logger = get_logger(__name__)
 
 
 def ensure_dirs() -> None:
@@ -52,8 +56,10 @@ def read_frame(path: Path) -> pd.DataFrame | None:
         return None
     try:
         return standardize_ohlcv(pd.read_parquet(path))
-    except Exception:
-        # Tệp hỏng không được phép làm sập dashboard.
+    except Exception as exc:
+        # Tệp hỏng không được phép làm sập dashboard, nhưng phải để lại dấu vết
+        # thay vì biến mất im lặng.
+        logger.error("Không đọc được %s: %s: %s", path, type(exc).__name__, exc)
         return None
 
 
@@ -123,7 +129,8 @@ def read_json(path: Path) -> dict | None:
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.error("Không đọc được %s: %s: %s", path, type(exc).__name__, exc)
         return None
 
 
@@ -143,18 +150,13 @@ def _jsonable(value):
         return value
     if isinstance(value, (pd.Timestamp,)):
         return value.strftime("%Y-%m-%d")
-    try:
-        import numpy as np
-
-        if isinstance(value, np.floating):
-            number = float(value)
-            return number if math.isfinite(number) else None
-        if isinstance(value, np.integer):
-            return int(value)
-        if isinstance(value, np.bool_):
-            return bool(value)
-    except Exception:
-        pass
+    if isinstance(value, np.floating):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
     return str(value)
 
 
