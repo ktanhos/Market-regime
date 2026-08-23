@@ -10,9 +10,9 @@ from src import config
 from src.breadth import compute_breadth
 from src.concentration import compute_concentration, concentration_metrics, risk_weights
 from src.dispersion import compute_dispersion, cross_sectional_dispersion
-from src.roro import TREND_UNKNOWN, calculate_roro, calculate_strength, classify_roro, trend_snapshot
+from src.trend import TREND_UNKNOWN, calculate_roro, calculate_strength, classify_roro, trend_snapshot
 from src.schema import standardize_ohlcv, to_close_panel
-from src.volatility import classify_stress, parkinson_volatility, stress_snapshot
+from src.stress import classify_stress, parkinson_volatility, stress_snapshot
 from tests.conftest import synthetic_ohlcv
 
 

@@ -30,7 +30,7 @@ def no_network(monkeypatch):
     monkeypatch.setattr(requests, "get", forbidden)
     monkeypatch.setattr(requests, "post", forbidden)
     monkeypatch.setattr(client, "_single_call", forbidden)
-    monkeypatch.setattr(client, "fetch_vn30_constituents", forbidden)
+    monkeypatch.setattr(client, "fetch_index_members", forbidden)
 
 
 def test_dashboard_renders_without_exception(no_network):
@@ -50,7 +50,7 @@ def test_update_button_exists_and_is_not_triggered_on_open(no_network):
     app.run()
     labels = [b.label for b in app.sidebar.button]
     assert "Cập nhật dữ liệu" in labels
-    assert "Kiểm tra kết nối API" in labels
+    assert "Kiểm tra API" in labels
 
 
 def test_no_deprecated_streamlit_width_argument():
@@ -61,9 +61,8 @@ def test_no_deprecated_streamlit_width_argument():
 
 def test_dashboard_renders_the_full_layout_with_complete_data(no_network, temp_store):
     """Đủ dữ liệu chỉ số và cổ phiếu thì toàn bộ thẻ phải hiện ra."""
-    from src import config, storage, universe as universe_module
+    from src import config, features, storage, universe as universe_module
     from src.schema import standardize_ohlcv
-    from src.updater import rebuild_features
     from tests.conftest import synthetic_ohlcv
 
     symbols = [f"S{i:02d}" for i in range(30)]
@@ -79,7 +78,7 @@ def test_dashboard_renders_the_full_layout_with_complete_data(no_network, temp_s
             standardize_ohlcv(synthetic_ohlcv(320, seed=100 + i, drift=0.0005 if i % 3 else -0.0004)),
             storage.stock_path(symbol),
         )
-    rebuild_features(symbols)
+    features.rebuild(symbols)
 
     app = AppTest.from_file(APP, default_timeout=180)
     app.run()

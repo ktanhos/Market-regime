@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from src import regime as regime_module
-from src.portfolio import guidance
+from src.portfolio_risk import guidance
 
 
 def test_all_five_regimes_are_reachable():

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from src import config, quality, storage
 from src import universe as universe_module
 from src.schema import standardize_ohlcv
-from src.updater import build_market_state, rebuild_features, run_update
+from src.features import build_snapshot
+from src.updater import rebuild_features, run_update
 from src.vnstock_data import RATE_LIMITED, TRANSIENT, FetchError, FetchResult
 from tests.conftest import synthetic_ohlcv
 
@@ -64,9 +66,15 @@ def test_second_update_is_incremental_not_a_full_refetch(temp_store):
     second = make_fetcher()
     run_update(fetcher=second, universe_fetcher=universe_fetcher, sleep=lambda s: None)
 
-    starts = {symbol: start for symbol, start, _ in second.calls}
-    # Lần hai phải xin dữ liệu từ gần ngày cuối cùng đã lưu, không phải từ 2015.
-    assert starts["VNINDEX"] > config.INDEX_HISTORY_START
+    starts = {symbol: pd.Timestamp(start) for symbol, start, _ in second.calls}
+    # Lần hai phải nối tiếp từ ngày cuối cùng đã lưu, không tải lại toàn bộ lịch sử.
+    for name, path in (
+        ("VNINDEX", storage.index_path(config.VNINDEX_DATASET)),
+        ("S00", storage.stock_path("S00")),
+    ):
+        last = storage.last_stored_date(path)
+        assert (last - starts[name]).days == config.INCREMENTAL_OVERLAP_DAYS
+    assert starts["VNINDEX"] > pd.Timestamp(config.index_history_start())
 
 
 def test_merge_does_not_duplicate_dates_on_repeated_updates(temp_store):
@@ -144,36 +152,42 @@ def test_total_api_failure_reports_zero_with_reasons_not_a_crash(temp_store):
 
 # --- Đọc dữ liệu cho dashboard ------------------------------------------------
 
-def test_dashboard_state_has_no_data_path(temp_store):
-    state = build_market_state(UNIVERSE)
+def test_snapshot_has_no_data_path(temp_store):
+    state = build_snapshot(UNIVERSE)
     assert state["ready"] is False
     assert "VNINDEX" in state["reason"]
 
 
-def test_dashboard_state_after_a_successful_update(temp_store):
+def test_snapshot_after_a_successful_update(temp_store):
     run_update(fetcher=make_fetcher(), universe_fetcher=universe_fetcher, sleep=lambda s: None)
-    state = build_market_state()
+    from src import portfolio_risk, regime as regime_module
 
+    state = build_snapshot()
     assert state["ready"] is True
-    assert state["regime"]["regime"] in {
-        "THUẬN LỢI", "CẢNH BÁO", "CHUYỂN TIẾP", "CHỊU ÁP LỰC", "CĂNG THẲNG",
-    }
     assert state["breadth"]["sufficient"] is True
     assert state["breadth"]["universe_size"] == 30
-    assert state["portfolio"]["risk_budget"]
     assert not state["missing_symbols"]
+
+    # Feature Layer -> Market Regime Layer -> Portfolio Risk Layer
+    regime = regime_module.build_regime(
+        state["trend"], state["stress"], state["breadth"],
+        state["dispersion"], state["concentration"],
+    )
+    assert regime["regime"] in {
+        "THUẬN LỢI", "CẢNH BÁO", "CHUYỂN TIẾP", "CHỊU ÁP LỰC", "CĂNG THẲNG",
+    }
+    assert portfolio_risk.guidance(regime)["risk_budget"]
 
 
 def test_dashboard_works_when_only_the_index_is_available(temp_store):
     """Thiếu toàn bộ cổ phiếu VN30 phải suy giảm êm, không được sập."""
     storage.write_frame(standardize_ohlcv(synthetic_ohlcv(400)), storage.index_path(config.VNINDEX_DATASET))
-    state = build_market_state(UNIVERSE)
+    state = build_snapshot(UNIVERSE)
 
     assert state["ready"] is True
     assert state["breadth"]["state"] == "CHƯA ĐỦ DỮ LIỆU"
     assert state["breadth"]["sufficient"] is False
     assert len(state["missing_symbols"]) == 30
-    assert state["regime"]["regime"] != ""
 
 
 def test_corrupted_parquet_is_ignored_rather_than_crashing(temp_store):

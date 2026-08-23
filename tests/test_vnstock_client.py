@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import pytest
 
@@ -9,6 +11,8 @@ from src import config
 from src.schema import DataQualityError, standardize_ohlcv
 from src.vnstock_data import (
     EMPTY,
+    fetch_equity,
+    fetch_index,
     PERMANENT,
     RATE_LIMITED,
     TRANSIENT,
@@ -102,10 +106,21 @@ def test_empty_response_is_an_error_not_silent_success():
 
 
 def test_default_start_uses_long_history_for_index_and_short_for_stock():
-    assert default_start("index") == config.INDEX_HISTORY_START
-    assert default_start("stock") > "2000-01-01"
-    incremental = default_start("index", pd.Timestamp("2026-08-20"))
-    assert incremental < "2026-08-20"  # có chồng lấn để bắt dữ liệu điều chỉnh muộn
+    """Chỉ số cần nền dài, cổ phiếu chỉ cần đủ MA200 của chính nó."""
+    index_start = pd.Timestamp(default_start("index"))
+    stock_start = pd.Timestamp(default_start("stock"))
+    today = pd.Timestamp(date.today())
+
+    assert (today - index_start).days >= 365 * config.INDEX_HISTORY_YEARS - 2
+    assert (today - stock_start).days == config.STOCK_HISTORY_CALENDAR_DAYS
+    assert stock_start > index_start
+
+
+def test_incremental_start_overlaps_the_last_stored_session():
+    last = pd.Timestamp("2026-08-20")
+    start = pd.Timestamp(default_start("index", last))
+    assert (last - start).days == config.INCREMENTAL_OVERLAP_DAYS
+    assert 10 <= config.INCREMENTAL_OVERLAP_DAYS <= 15
 
 
 def test_connectivity_check_reports_failures_without_raising(monkeypatch):
@@ -114,7 +129,82 @@ def test_connectivity_check_reports_failures_without_raising(monkeypatch):
     def failing(symbol, start, end=None, asset_type="stock", **kwargs):
         raise FetchError("không kết nối được", TRANSIENT, symbol=symbol, source="VCI")
 
+    def failing_members(*args, **kwargs):
+        raise FetchError("không lấy được danh sách", TRANSIENT, symbol="VN30", source="VCI")
+
     monkeypatch.setattr(module, "fetch_history", failing)
-    rows = module.connectivity_check(sleep=lambda s: None)
-    assert [r["symbol"] for r in rows] == ["VNINDEX", "FPT"]
-    assert all(r["ok"] is False and r["message"] for r in rows)
+    monkeypatch.setattr(module, "fetch_index_members", failing_members)
+    probes = module.connectivity_check(sleep=lambda s: None)
+    assert [p.name for p in probes] == ["VNINDEX", "FPT", "VN30 Universe"]
+    assert all(p.ok is False and p.error for p in probes)
+    assert all(p.as_dict()["Kết quả"] == "FAILED" for p in probes)
+
+
+def test_connectivity_check_reports_schema_and_range_on_success(monkeypatch):
+    import src.vnstock_data as module
+
+    def ok(symbol, start, end=None, asset_type="stock", **kwargs):
+        return module.FetchResult(
+            symbol=symbol,
+            frame=standardize_ohlcv(synthetic_ohlcv(30)),
+            source="VCI",
+            attempts=1,
+        )
+
+    monkeypatch.setattr(module, "fetch_history", ok)
+    monkeypatch.setattr(module, "fetch_index_members", lambda *a, **k: [f"S{i:02d}" for i in range(30)])
+    probes = module.connectivity_check(sleep=lambda s: None)
+
+    assert all(p.ok for p in probes)
+    price = probes[0].as_dict()
+    assert price["Kết quả"] == "SUCCESS"
+    assert price["Số dòng"] == 30
+    assert price["Ngày đầu"] and price["Ngày cuối"]
+    assert price["Schema"] == "date, open, high, low, close, volume"
+    assert probes[2].rows == 30
+
+
+def test_named_helpers_pick_the_right_asset_type():
+    seen = []
+
+    def caller(symbol, source, start, end):
+        seen.append((symbol, source))
+        return standardize_ohlcv(synthetic_ohlcv(30))
+
+    module_index = fetch_index("VN30", start="2024-01-01", caller=caller, sleep=lambda s: None)
+    assert module_index.source == "VCI"
+    fetch_equity("FPT", start="2024-01-01", caller=caller, sleep=lambda s: None)
+    assert [s for _, s in seen] == ["VCI", "VCI"]
+
+
+def test_fetch_index_members_rejects_an_implausibly_short_list(monkeypatch):
+    import src.vnstock_data as module
+
+    class FakeListing:
+        def __init__(self, source):
+            self.source = source
+
+        def symbols_by_group(self, group):
+            return pd.Series(["ACB", "FPT"])
+
+    monkeypatch.setattr(module, "_listing_class", lambda: FakeListing)
+    with pytest.raises(FetchError) as info:
+        module.fetch_index_members("VN30")
+    assert info.value.kind == module.EMPTY
+
+
+def test_fetch_index_members_normalises_and_sorts(monkeypatch):
+    import src.vnstock_data as module
+
+    class FakeListing:
+        def __init__(self, source):
+            self.source = source
+
+        def symbols_by_group(self, group):
+            return pd.Series([" fpt ", "ACB", "acb", "VNM"] + [f"S{i:02d}" for i in range(25)])
+
+    monkeypatch.setattr(module, "_listing_class", lambda: FakeListing)
+    symbols = module.fetch_index_members("VN30")
+    assert symbols == sorted(symbols)
+    assert symbols.count("ACB") == 1
+    assert "FPT" in symbols
