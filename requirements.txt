@@ -1,7 +1,17 @@
-streamlit
-pandas
-numpy
-pyarrow
-vnstock
-plotly
-requests
+# Phiên bản được khóa theo bộ đã chạy và đã test.
+#
+# vnstock 4.0.7 là phiên bản có giao diện Quote/Listing đang dùng trong
+# src/vnstock_data.py. Không nâng lên nhánh khác nếu chưa kiểm tra lại vì lớp
+# provider (VCI/KBS) và bảng ánh xạ chỉ số nằm trong chính gói này.
+vnstock==4.0.7
+
+# streamlit >= 1.51 là mốc đầu tiên có tham số width= trên st.plotly_chart,
+# tức là mốc bỏ được hoàn toàn use_container_width.
+streamlit==1.62.0
+
+# vnstock 4.x chưa hỗ trợ pandas 3.
+pandas==2.3.3
+numpy==2.2.6
+pyarrow==21.0.0
+plotly==6.9.0
+requests==2.34.2
