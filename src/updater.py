@@ -1,19 +1,19 @@
-"""Pipeline cập nhật dữ liệu. Đây là nơi DUY NHẤT gọi API trong ứng dụng.
+"""Market Data Layer: pipeline cập nhật. Nơi DUY NHẤT khởi động lời gọi API.
 
-Luồng::
+Luồng đúng theo thứ tự::
 
-    kiểm tra dữ liệu đã lưu
-    -> xác định ngày cuối cùng của từng tập
-    -> gọi API phần còn thiếu (tuần tự, có nghỉ, có backoff)
-    -> chuẩn hóa
-    -> kiểm tra dữ liệu
-    -> hợp nhất, loại ngày trùng
-    -> lưu Parquet
-    -> tính lại chỉ tiêu
-    -> lưu processed data + nhật ký chất lượng
+    1. Kiểm tra dữ liệu đã lưu, xác định ngày cuối cùng của từng tập
+    2. Lấy VNINDEX phần còn thiếu
+    3. Lấy danh sách VN30 hiện tại từ API
+    4. Lấy dữ liệu từng mã VN30, tuần tự, có nghỉ
+    5. Chuẩn hóa
+    6. Gộp, loại ngày trùng
+    7. Tính lại features
+    8. Lưu Parquet + processed data
+    9. Đồng bộ GitHub (do tầng gọi thực hiện, sau khi pipeline kết thúc,
+       để một lần cập nhật chỉ tạo đúng một commit)
 
-Đồng bộ GitHub được thực hiện ở tầng gọi (``app.py`` hoặc script), sau khi
-pipeline này kết thúc, để một lần cập nhật chỉ tạo đúng một commit.
+Module này không import Streamlit và không biết gì về giao diện.
 """
 
 from __future__ import annotations
@@ -21,39 +21,48 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import date
+from pathlib import Path
 from typing import Callable, Sequence
 
 import pandas as pd
 
-from src import breadth as breadth_module
-from src import concentration as concentration_module
-from src import config
-from src import dispersion as dispersion_module
-from src import portfolio as portfolio_module
-from src import regime as regime_module
-from src import roro as roro_module
-from src import storage
+from src import config, features, storage
 from src import universe as universe_module
-from src import volatility as volatility_module
-from src.schema import DATE_COLUMN, to_close_panel
+from src.logging_config import get_logger
 from src.vnstock_data import (
+    ASSET_INDEX,
+    ASSET_STOCK,
     RATE_LIMITED,
     FetchError,
     default_start,
     fetch_history,
-    fetch_vn30_constituents,
+    fetch_index_members,
     friendly_message,
     vnstock_version,
 )
 
+logger = get_logger(__name__)
+
+# Năm giai đoạn hiển thị trên thanh tiến trình.
+PHASE_INDEX = "vnindex"
 PHASE_UNIVERSE = "universe"
-PHASE_INDEX = "index"
 PHASE_STOCKS = "stocks"
 PHASE_FEATURES = "features"
+PHASE_SYNC = "github"
+
+PHASE_LABELS = {
+    PHASE_INDEX: "VNINDEX",
+    PHASE_UNIVERSE: "VN30 Universe",
+    PHASE_STOCKS: "VN30 Stocks",
+    PHASE_FEATURES: "Features",
+    PHASE_SYNC: "GitHub",
+}
 
 
 @dataclass
 class UpdateReport:
+    """Kết quả một lần cập nhật, cũng là nhật ký chất lượng dữ liệu."""
+
     started_at: str = ""
     finished_at: str = ""
     source: str = ""
@@ -66,6 +75,15 @@ class UpdateReport:
     rate_limited: bool = False
     aborted_reason: str = ""
 
+    @property
+    def failure_count(self) -> int:
+        return len(self.failures)
+
+    @property
+    def completed(self) -> bool:
+        """Chỉ coi là hoàn tất khi mọi nguồn đều thành công."""
+        return self.total_count > 0 and self.success_count == self.total_count
+
     def as_dict(self) -> dict:
         return {
             "started_at": self.started_at,
@@ -74,13 +92,17 @@ class UpdateReport:
             "vnstock_version": self.vnstock_version,
             "total_count": self.total_count,
             "success_count": self.success_count,
-            "failure_count": len(self.failures),
+            "failure_count": self.failure_count,
+            "completed": self.completed,
             "datasets": self.datasets,
             "failures": self.failures,
             "universe": self.universe,
             "rate_limited": self.rate_limited,
             "aborted_reason": self.aborted_reason,
         }
+
+
+ProgressCallback = Callable[[str, float, str], None]
 
 
 def _noop(*_args, **_kwargs) -> None:
@@ -91,7 +113,7 @@ def _update_one(
     name: str,
     symbol: str,
     asset_type: str,
-    path,
+    path: Path,
     end: str,
     fetcher: Callable,
     sleep: Callable[[float], None],
@@ -116,12 +138,35 @@ def _update_one(
     return report
 
 
+def _record_failure(report: UpdateReport, symbol: str, exc: BaseException) -> bool:
+    """Ghi lại một lỗi. Trả về True nếu phải dừng cả lượt chạy."""
+    if isinstance(exc, FetchError):
+        report.failures.append(exc.as_dict())
+        if exc.kind == RATE_LIMITED:
+            report.rate_limited = True
+            report.aborted_reason = friendly_message(RATE_LIMITED)
+            logger.error("Dừng cập nhật vì bị giới hạn truy cập tại %s", symbol)
+            return True
+        return False
+
+    report.failures.append(
+        {
+            "symbol": symbol,
+            "source": config.PRIMARY_SOURCE,
+            "kind": "unexpected",
+            "message": f"{type(exc).__name__}: {str(exc)[:250]}",
+        }
+    )
+    logger.exception("Lỗi ngoài dự kiến khi cập nhật %s", symbol)
+    return False
+
+
 def run_update(
     refresh_universe: bool = True,
-    progress: Callable[[str, float, str], None] | None = None,
+    progress: ProgressCallback | None = None,
     sleep: Callable[[float], None] = time.sleep,
     fetcher: Callable = fetch_history,
-    universe_fetcher: Callable = fetch_vn30_constituents,
+    universe_fetcher: Callable = fetch_index_members,
     end: str | None = None,
 ) -> UpdateReport:
     """Chạy toàn bộ pipeline cập nhật.
@@ -137,200 +182,113 @@ def run_update(
     )
     storage.ensure_dirs()
     end = end or date.today().isoformat()
+    logger.info("Bắt đầu cập nhật dữ liệu tới %s", end)
 
-    # 1. Danh sách VN30 hiện tại -------------------------------------------------
-    notify(PHASE_UNIVERSE, 0.02, "Đang xác định danh sách VN30 hiện tại")
+    # --- 1. VNINDEX và chỉ số VN30 ------------------------------------------
+    index_jobs = [
+        ("VNINDEX", "VNINDEX", config.VNINDEX_DATASET),
+        ("VN30", "VN30", config.VN30_INDEX_DATASET),
+    ]
+    stopped = False
+    for position, (label, symbol, dataset) in enumerate(index_jobs):
+        notify(PHASE_INDEX, position / len(index_jobs), f"Chỉ số {label}")
+        try:
+            info = _update_one(
+                label, symbol, ASSET_INDEX, storage.index_path(dataset),
+                end, fetcher, sleep, min_rows=100,
+            )
+            report.datasets.append(info)
+            report.success_count += 1
+        except Exception as exc:
+            stopped = _record_failure(report, label, exc)
+            if stopped:
+                break
+        sleep(config.REQUEST_DELAY_SECONDS)
+    notify(PHASE_INDEX, 1.0, "Xong chỉ số")
+
+    # --- 2. Danh sách VN30 hiện tại ------------------------------------------
+    notify(PHASE_UNIVERSE, 0.3, "Đang lấy danh sách VN30 hiện tại")
     current = universe_module.load_universe()
     symbols = current["symbols"]
-    if refresh_universe:
+    if stopped:
+        report.universe = {"status": "bỏ qua", **current}
+    elif refresh_universe:
         try:
             fetched = universe_fetcher()
             saved = universe_module.save_universe(
-                fetched, source=f"vnstock Listing({config.PRIMARY_SOURCE}).symbols_by_group('VN30')"
+                fetched,
+                source=f"vnstock Listing('{config.PRIMARY_SOURCE}').symbols_by_group('VN30')",
             )
             symbols = saved["symbols"]
-            report.universe = {"status": "cập nhật", **saved}
+            report.universe = {"status": "cập nhật từ API", **saved}
         except FetchError as exc:
             report.universe = {
                 "status": "dùng danh sách đã lưu",
                 "symbols": symbols,
                 "as_of": current.get("as_of", ""),
                 "source": current.get("source", ""),
+                "is_fallback": current.get("is_fallback", True),
                 "error": str(exc)[:300],
             }
+            report.failures.append(exc.as_dict())
+            logger.warning("Không lấy được danh sách VN30, dùng ảnh chụp đã lưu")
             if exc.kind == RATE_LIMITED:
                 report.rate_limited = True
                 report.aborted_reason = friendly_message(RATE_LIMITED)
-                report.finished_at = storage.utc_now_iso()
-                storage.write_json(config.UPDATE_LOG_FILE, report.as_dict())
-                return report
+                stopped = True
     else:
         report.universe = {"status": "giữ nguyên", **current}
+    notify(PHASE_UNIVERSE, 1.0, f"{len(symbols)} mã VN30")
 
-    # 2. Chỉ số ------------------------------------------------------------------
-    index_jobs = [
-        ("VNINDEX", "VNINDEX", config.VNINDEX_DATASET),
-        ("VN30", "VN30", config.VN30_INDEX_DATASET),
-    ]
-    jobs_total = len(index_jobs) + len(symbols)
-    report.total_count = jobs_total
-    done = 0
+    report.total_count = len(index_jobs) + len(symbols)
 
-    for label, symbol, dataset in index_jobs:
-        notify(PHASE_INDEX, done / jobs_total, f"Chỉ số {label}")
-        try:
-            info = _update_one(
-                label, symbol, "index", storage.index_path(dataset), end, fetcher, sleep, min_rows=100
-            )
-            report.datasets.append(info)
-            report.success_count += 1
-        except FetchError as exc:
-            report.failures.append(exc.as_dict())
-            if exc.kind == RATE_LIMITED:
-                report.rate_limited = True
-                report.aborted_reason = friendly_message(RATE_LIMITED)
-                break
-        except Exception as exc:
-            report.failures.append(
-                {"symbol": label, "source": config.PRIMARY_SOURCE, "kind": "unexpected",
-                 "message": f"{type(exc).__name__}: {str(exc)[:250]}"}
-            )
-        done += 1
-        sleep(config.REQUEST_DELAY_SECONDS)
-
-    # 3. Cổ phiếu VN30 hiện tại ---------------------------------------------------
-    if not report.rate_limited:
+    # --- 3. Cổ phiếu VN30 hiện tại -------------------------------------------
+    if not stopped:
         for i, symbol in enumerate(symbols, start=1):
-            notify(PHASE_STOCKS, done / jobs_total, f"Cổ phiếu {symbol} ({i}/{len(symbols)})")
+            notify(PHASE_STOCKS, (i - 1) / len(symbols), f"{symbol} ({i}/{len(symbols)})")
             try:
                 info = _update_one(
-                    symbol, symbol, "stock", storage.stock_path(symbol), end, fetcher, sleep, min_rows=20
+                    symbol, symbol, ASSET_STOCK, storage.stock_path(symbol),
+                    end, fetcher, sleep, min_rows=20,
                 )
                 report.datasets.append(info)
                 report.success_count += 1
-            except FetchError as exc:
-                report.failures.append(exc.as_dict())
-                if exc.kind == RATE_LIMITED:
-                    report.rate_limited = True
-                    report.aborted_reason = (
-                        friendly_message(RATE_LIMITED)
-                        + f" Đã dừng sau {i}/{len(symbols)} mã để không làm nặng thêm."
+            except Exception as exc:
+                if _record_failure(report, symbol, exc):
+                    report.aborted_reason += (
+                        f" Đã dừng sau {i}/{len(symbols)} mã để không làm nặng thêm."
                     )
                     break
-            except Exception as exc:
-                report.failures.append(
-                    {"symbol": symbol, "source": config.PRIMARY_SOURCE, "kind": "unexpected",
-                     "message": f"{type(exc).__name__}: {str(exc)[:250]}"}
-                )
-            done += 1
             if i < len(symbols):
                 sleep(config.REQUEST_DELAY_SECONDS)
+    notify(PHASE_STOCKS, 1.0, "Xong cổ phiếu")
 
-    # 4. Tính lại chỉ tiêu --------------------------------------------------------
-    notify(PHASE_FEATURES, 0.92, "Đang tính lại các chỉ tiêu")
+    # --- 4. Tính lại chỉ tiêu -------------------------------------------------
+    notify(PHASE_FEATURES, 0.4, "Đang tính lại các chỉ tiêu")
     try:
-        rebuild_features(symbols)
+        features.rebuild(symbols)
     except Exception as exc:
         report.failures.append(
-            {"symbol": "features", "source": "local", "kind": "compute",
-             "message": f"{type(exc).__name__}: {str(exc)[:250]}"}
+            {
+                "symbol": "features",
+                "source": "local",
+                "kind": "compute",
+                "message": f"{type(exc).__name__}: {str(exc)[:250]}",
+            }
         )
+        logger.exception("Không tính lại được chỉ tiêu")
+    notify(PHASE_FEATURES, 1.0, "Xong tính toán")
 
     report.finished_at = storage.utc_now_iso()
     storage.write_json(config.UPDATE_LOG_FILE, report.as_dict())
-    notify(PHASE_FEATURES, 1.0, "Hoàn tất")
+    logger.info(
+        "Kết thúc cập nhật: %d/%d nguồn thành công",
+        report.success_count,
+        report.total_count,
+    )
     return report
 
 
 def rebuild_features(symbols: Sequence[str] | None = None) -> dict:
-    """Tính lại toàn bộ chỉ tiêu từ dữ liệu đã lưu. Không gọi mạng."""
-    symbols = list(symbols or universe_module.symbols())
-    storage.ensure_dirs()
-
-    index_frame = storage.load_index(config.VNINDEX_DATASET)
-    if index_frame is None or index_frame.empty:
-        raise RuntimeError("Chưa có dữ liệu VNINDEX để tính chỉ tiêu")
-
-    trend = roro_module.trend_frame(index_frame["close"])
-    stress = volatility_module.stress_frame(index_frame)
-    features = pd.concat(
-        [index_frame.reset_index(drop=True), trend.reset_index(drop=True), stress.reset_index(drop=True)],
-        axis=1,
-    )
-    features.to_parquet(config.VNINDEX_FEATURES_FILE, index=False)
-
-    frames, _missing = storage.load_stocks(symbols)
-    panel = to_close_panel(frames)
-    breadth = breadth_module.compute_breadth(frames, symbols)
-    dispersion = dispersion_module.compute_dispersion(panel)
-    concentration = concentration_module.compute_concentration(panel)
-
-    snapshot = {
-        "generated_at": storage.utc_now_iso(),
-        "as_of": None if breadth.get("as_of") is None else pd.Timestamp(breadth["as_of"]).strftime("%Y-%m-%d"),
-        "universe_size": breadth["universe_size"],
-        "valid_symbols": breadth.get("valid_symbols", 0),
-        "min_valid_symbols": breadth.get("min_valid_symbols", 0),
-        "max_valid_symbols": breadth.get("max_valid_symbols", 0),
-        "missing_symbols": breadth["missing_symbols"],
-        "breadth_score": breadth["score"],
-        "breadth_state": breadth["state"],
-        "breadth_components": {
-            key: {"pct": value["pct"], "valid": value["valid"], "window": value["window"]}
-            for key, value in breadth["components"].items()
-        },
-        "dispersion": {
-            "value": dispersion["value"],
-            "percentile": dispersion["percentile"],
-            "state": dispersion["state"],
-            "windows": dispersion["windows"],
-            "historical_basis": dispersion["historical_basis"],
-        },
-        "concentration": {
-            "hhi": concentration["hhi"],
-            "effective_names": concentration["effective_names"],
-            "top_shares": concentration["top_shares"],
-            "percentile": concentration["percentile"],
-            "state": concentration["state"],
-            "contributors": concentration["contributors"],
-            "proxy_note": concentration["proxy_note"],
-        },
-    }
-    storage.write_json(config.VN30_SNAPSHOT_FILE, snapshot)
-    return snapshot
-
-
-def build_market_state(symbols: Sequence[str] | None = None) -> dict:
-    """Toàn bộ dữ liệu dashboard cần, đọc từ đĩa. KHÔNG gọi API."""
-    meta = universe_module.load_universe()
-    symbols = list(symbols or meta["symbols"])
-
-    index_frame = storage.load_index(config.VNINDEX_DATASET)
-    if index_frame is None or index_frame.empty:
-        return {"ready": False, "reason": "Chưa có dữ liệu VNINDEX trong kho dữ liệu.", "universe": meta}
-
-    trend = roro_module.trend_snapshot(index_frame["close"])
-    stress = volatility_module.stress_snapshot(index_frame)
-
-    frames, missing = storage.load_stocks(symbols)
-    panel = to_close_panel(frames)
-    breadth = breadth_module.compute_breadth(frames, symbols)
-    dispersion = dispersion_module.compute_dispersion(panel)
-    concentration = concentration_module.compute_concentration(panel)
-
-    regime = regime_module.build_regime(trend, stress, breadth, dispersion, concentration)
-    return {
-        "ready": True,
-        "index": index_frame,
-        "as_of": pd.to_datetime(index_frame[DATE_COLUMN]).max(),
-        "trend": trend,
-        "stress": stress,
-        "breadth": breadth,
-        "dispersion": dispersion,
-        "concentration": concentration,
-        "regime": regime,
-        "portfolio": portfolio_module.guidance(regime),
-        "universe": meta,
-        "missing_symbols": missing,
-        "update_log": storage.read_json(config.UPDATE_LOG_FILE) or {},
-    }
+    """Tính lại chỉ tiêu từ dữ liệu đã lưu. Không gọi mạng."""
+    return features.rebuild(symbols)

@@ -1,7 +1,8 @@
-"""Kiểm tra kết nối tới nguồn dữ liệu vnstock.
+"""Chẩn đoán kết nối tới nguồn dữ liệu vnstock.
 
-Chạy hai phép thử tối thiểu: một chỉ số (VNINDEX) và một cổ phiếu (FPT).
-Nếu hai phép thử này không chạy được thì không nên gọi tiếp 30 mã còn lại.
+Ba phép thử tối thiểu: một chỉ số (VNINDEX), một cổ phiếu (FPT) và danh sách
+thành phần VN30. Nếu ba phép thử này không chạy được thì không nên gọi tiếp 30
+mã còn lại.
 
     python scripts/check_api.py
 """
@@ -15,34 +16,39 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src import config
-from src.vnstock_data import connectivity_check, fetch_vn30_constituents, vnstock_version
+from src.logging_config import setup
+from src.vnstock_data import connectivity_check, expected_schema, vnstock_version
 
 
 def main() -> int:
+    setup()
     print(f"vnstock {vnstock_version()} · nguồn chính {config.PRIMARY_SOURCE}")
-    print("API đang dùng: Quote(symbol=..., source=...).history(start=..., end=..., interval='1D')")
-    print("-" * 72)
+    print("API: Quote(symbol=..., source=...).history(start=..., end=..., interval='1D')")
+    print("     Listing(source=...).symbols_by_group('VN30')")
+    print("Schema kỳ vọng: " + ", ".join(expected_schema()))
+    print("-" * 78)
 
-    failures = 0
-    for row in connectivity_check():
-        if row["ok"]:
-            print(f"[OK]   {row['symbol']:<8} nguồn {row['source']:<4} {row['rows']:>4} phiên, đến {row['last_date']}")
+    probes = connectivity_check()
+    for probe in probes:
+        verdict = "SUCCESS" if probe.ok else "FAILED "
+        print(f"[{verdict}] {probe.name}")
+        if probe.ok:
+            print(f"           nguồn {probe.source} · {probe.rows} dòng")
+            if probe.last_date:
+                print(f"           {probe.first_date} → {probe.last_date}")
+            print(f"           schema: {', '.join(probe.schema)}")
+            if probe.name == "VN30 Universe":
+                print(f"           {probe.detail}")
         else:
-            failures += 1
-            print(f"[LỖI]  {row['symbol']:<8} {row['kind']}: {row['message']}")
+            print(f"           [{probe.kind}] {probe.error}")
 
-    print("-" * 72)
-    try:
-        symbols = fetch_vn30_constituents()
-        print(f"[OK]   VN30 hiện có {len(symbols)} mã: {', '.join(symbols)}")
-    except Exception as exc:
-        failures += 1
-        print(f"[LỖI]  Danh sách VN30: {type(exc).__name__}: {exc}")
-
+    print("-" * 78)
+    failures = [p for p in probes if not p.ok]
     if failures:
-        print(f"\n{failures} phép thử thất bại. Không nên chạy cập nhật toàn bộ khi chưa xử lý xong.")
+        print(f"{len(failures)}/{len(probes)} phép thử thất bại. "
+              "Không nên chạy cập nhật toàn bộ khi chưa xử lý xong.")
         return 1
-    print("\nToàn bộ phép thử đạt. Có thể chạy scripts/update_data.py.")
+    print(f"{len(probes)}/{len(probes)} phép thử đạt. Có thể chạy scripts/update_data.py.")
     return 0
 
 
