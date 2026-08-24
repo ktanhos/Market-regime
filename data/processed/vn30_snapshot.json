@@ -1,16 +1,16 @@
 {
-  "generated_at": "2026-08-24T02:12:02+00:00",
-  "as_of": "2026-08-21",
+  "generated_at": "2026-08-24T03:47:55+00:00",
+  "as_of": "2026-08-24",
   "universe_size": 30,
   "valid_symbols": 30,
   "min_valid_symbols": 30,
   "max_valid_symbols": 30,
   "missing_symbols": [],
-  "breadth_score": 75.0,
+  "breadth_score": 73.8888888888889,
   "breadth_state": "RẤT KHỎE",
   "breadth_components": {
     "ma20": {
-      "pct": 83.33333333333334,
+      "pct": 86.66666666666667,
       "valid": 30,
       "window": 20
     },
@@ -20,12 +20,12 @@
       "window": 50
     },
     "ma200": {
-      "pct": 40.0,
+      "pct": 43.333333333333336,
       "valid": 30,
       "window": 200
     },
     "ret1": {
-      "pct": 83.33333333333334,
+      "pct": 70.0,
       "valid": 30,
       "window": 1
     },
@@ -41,37 +41,37 @@
     }
   },
   "dispersion": {
-    "value": 7.063446662586313,
-    "percentile": 23.015873015873016,
+    "value": 8.411538861831449,
+    "percentile": 42.06349206349206,
     "state": "PHÂN HÓA TRUNG BÌNH",
     "windows": {
       "1": {
-        "value": 1.6153580610336342,
-        "percentile": 33.33333333333333,
-        "observations": 308
+        "value": 1.2080631132072401,
+        "percentile": 9.920634920634921,
+        "observations": 309
       },
       "5": {
-        "value": 2.508399083528751,
-        "percentile": 4.761904761904762,
-        "observations": 304
+        "value": 2.4626923752990337,
+        "percentile": 3.571428571428571,
+        "observations": 305
       },
       "20": {
-        "value": 7.063446662586313,
-        "percentile": 23.015873015873016,
-        "observations": 289
+        "value": 8.411538861831449,
+        "percentile": 42.06349206349206,
+        "observations": 290
       }
     },
     "historical_basis": "Phân vị tính trên rổ VN30 hiện tại kéo ngược về quá khứ, không phải thành phần VN30 thực tế của từng ngày. Chỉ dùng để mô tả bối cảnh."
   },
   "concentration": {
-    "hhi": 0.03611757753514395,
-    "effective_names": 27.687349712946755,
+    "hhi": 0.036205881421392486,
+    "effective_names": 27.619821994145497,
     "top_shares": {
-      "5": 24.98752432666221,
-      "10": 44.52160202614356
+      "5": 25.44704024402166,
+      "10": 44.51073084366489
     },
-    "percentile": 11.904761904761903,
-    "state": "TẬP TRUNG THẤP",
+    "percentile": 23.809523809523807,
+    "state": "TẬP TRUNG TRUNG BÌNH",
     "contributors": 30,
     "proxy_note": "Tỷ trọng rủi ro suy ra từ biến động 20 phiên của từng mã. Đây là proxy về mức tập trung, không phải đóng góp rủi ro của một danh mục cụ thể."
   }
