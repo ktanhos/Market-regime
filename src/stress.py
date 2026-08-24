@@ -1,4 +1,6 @@
-"""Stress: biến động Parkinson và chế độ căng thẳng của VNINDEX.
+"""Stress Layer: biến động Parkinson và chế độ căng thẳng của VNINDEX.
+
+Tên hiển thị là **Market Stress** / **Volatility Stress Proxy**. Không phải VIX.
 
 Ước lượng Parkinson dùng **trung bình của bình phương log biên độ**, không phải
 phương sai quanh trung bình. Công thức chính xác đang dùng::
@@ -12,9 +14,9 @@ Chế độ căng thẳng không dùng ngưỡng tuyệt đối kiểu 20/25/35.
 của chính chuỗi biến động VNINDEX trong 252 phiên gần nhất, tức là so sánh mức
 biến động hiện tại với chính thị trường này trong một năm qua.
 
-``stress_index`` là chỉ số căng thẳng biến động dạng proxy 0-100. Đây KHÔNG phải
-VIX. Không có dữ liệu phái sinh (basis VN30F1M) trong mô hình vì nguồn dữ liệu
-phái sinh chưa đủ ổn định để đưa vào, và không có xác suất nào được gán cho nó.
+``stress_index`` là chỉ số căng thẳng biến động dạng proxy. Đây KHÔNG phải VIX.
+Không có dữ liệu phái sinh (basis VN30F1M) trong mô hình vì nguồn dữ liệu phái
+sinh chưa đủ ổn định để đưa vào, và không có xác suất nào được gán cho nó.
 """
 
 from __future__ import annotations
@@ -23,6 +25,9 @@ import numpy as np
 import pandas as pd
 
 from src import config
+from src.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 STRESS_UNKNOWN = "CHƯA ĐỦ DỮ LIỆU"
 

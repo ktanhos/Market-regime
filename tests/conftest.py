@@ -36,6 +36,29 @@ def synthetic_ohlcv(periods: int = 400, seed: int = 0, drift: float = 0.0003, vo
     )
 
 
+@pytest.fixture(autouse=True)
+def clear_streamlit_cache():
+    """Xóa cache của Streamlit giữa các bài test.
+
+    ``st.cache_data`` sống theo tiến trình, nên nếu không xóa thì một bài test
+    render dashboard với 30 mã sẽ để lại kết quả cho bài kế tiếp và bài đó tưởng
+    như đang có dữ liệu.
+    """
+    try:
+        import streamlit as st
+
+        st.cache_data.clear()
+    except Exception:
+        pass
+    yield
+    try:
+        import streamlit as st
+
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+
 @pytest.fixture()
 def temp_store(tmp_path, monkeypatch):
     """Chuyển toàn bộ đường dẫn kho dữ liệu sang thư mục tạm."""
@@ -56,7 +79,6 @@ def temp_store(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "UPDATE_LOG_FILE", processed / "update_log.json")
     monkeypatch.setattr(config, "VN30_SNAPSHOT_FILE", processed / "vn30_snapshot.json")
     monkeypatch.setattr(config, "VNINDEX_FEATURES_FILE", processed / "vnindex_features.parquet")
-    monkeypatch.setattr(config, "REQUEST_DELAY_SECONDS", 0.0)
     storage.ensure_dirs()
     return tmp_path
 

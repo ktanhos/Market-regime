@@ -1,4 +1,4 @@
-"""Trend: sức mạnh động lượng đa khung và chỉ báo RORO của VNINDEX.
+"""Trend Layer: sức mạnh động lượng đa khung và chỉ báo RORO của VNINDEX.
 
 Công thức giữ nguyên thiết kế gốc::
 
@@ -18,6 +18,9 @@ import numpy as np
 import pandas as pd
 
 from src import config
+from src.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 TREND_POSITIVE = "TÍCH CỰC"
 TREND_NEUTRAL = "TRUNG TÍNH"

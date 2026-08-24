@@ -10,9 +10,9 @@ from src import config
 from src.breadth import compute_breadth
 from src.concentration import compute_concentration, concentration_metrics, risk_weights
 from src.dispersion import compute_dispersion, cross_sectional_dispersion
-from src.roro import TREND_UNKNOWN, calculate_roro, calculate_strength, classify_roro, trend_snapshot
+from src.trend import TREND_UNKNOWN, calculate_roro, calculate_strength, classify_roro, trend_snapshot
 from src.schema import standardize_ohlcv, to_close_panel
-from src.volatility import classify_stress, parkinson_volatility, stress_snapshot
+from src.stress import classify_stress, parkinson_volatility, stress_snapshot
 from tests.conftest import synthetic_ohlcv
 
 
@@ -112,9 +112,41 @@ def test_breadth_covers_all_required_components():
 
 def test_breadth_with_no_data_is_not_a_crash():
     result = compute_breadth({}, ["AAA", "BBB"])
-    assert result["state"] == "CHƯA ĐỦ DỮ LIỆU"
+    assert result["state"] == "CHƯA CÓ DỮ LIỆU"
+    assert result["data_state"] == "no_data"
     assert result["sufficient"] is False
     assert result["missing_symbols"] == ["AAA", "BBB"]
+
+
+def test_breadth_distinguishes_no_data_from_short_history():
+    """Chưa có tệp và có tệp nhưng thiếu lịch sử là hai tình huống khác nhau."""
+    universe = [f"S{i:02d}" for i in range(30)]
+    short = {
+        symbol: standardize_ohlcv(synthetic_ohlcv(30, seed=i))
+        for i, symbol in enumerate(universe)
+    }
+    result = compute_breadth(short, universe)
+    assert result["data_state"] == "insufficient"
+    assert result["state"] == "DỮ LIỆU CHƯA ĐỦ"
+    assert result["loaded_symbols"] == 30       # có tệp
+    assert result["min_valid_symbols"] == 0     # nhưng không mã nào đủ MA200
+
+
+def test_breadth_flags_symbols_whose_data_lags_the_rest():
+    universe = [f"S{i:02d}" for i in range(30)]
+    frames = {
+        symbol: standardize_ohlcv(synthetic_ohlcv(300, seed=i))
+        for i, symbol in enumerate(universe)
+    }
+    frames["S07"] = frames["S07"].iloc[:-20]
+    result = compute_breadth(frames, universe)
+    assert result["data_state"] == "stale"
+    assert result["state"] == "DỮ LIỆU KHÔNG ĐỒNG BỘ"
+    assert result["stale_symbols"] == ["S07"]
+    assert result["max_gap_sessions"] == 20
+    # Vẫn tính được số liệu, chỉ kèm cảnh báo.
+    assert result["sufficient"] is True
+    assert 0 <= result["score"] <= 100
 
 
 def test_breadth_all_above_ma_gives_hundred_percent():

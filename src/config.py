@@ -6,6 +6,7 @@ Không có ngưỡng nào được suy ra từ mô hình học máy hay từ k�
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,18 +40,86 @@ INDEX_SOURCES = {
 }
 
 # --- Tần suất gọi API --------------------------------------------------------
-REQUEST_DELAY_SECONDS = 1.2   # nghỉ giữa hai mã, gọi tuần tự, không song song
+# Nguồn dữ liệu giới hạn số lượt gọi theo phút, khác nhau theo gói. Hạn mức
+# thật do chính vnstock công bố (``vnai.beam.auth.authenticator.TIER_LIMITS``):
+#
+#     guest 20/phút · free 60/phút · các gói tài trợ 180-600/phút
+#
+# Ở thời điểm chạy, ``src.vnstock_data`` hỏi thẳng client xem nó đang ở gói nào
+# rồi lấy hạn mức từ đó, nên không thể xảy ra chuyện tự nhận 60 trong khi client
+# vẫn ở gói Khách. Hai con số dưới đây chỉ là mức dự phòng khi không hỏi được.
+RATE_LIMIT_FALLBACK_GUEST = 20
+RATE_LIMIT_FALLBACK_WITH_KEY = 60
+
+# Chạy dưới hạn mức thật để chừa chỗ cho các lượt gọi ngoài pipeline
+# (ví dụ scripts/check_api.py chạy ngay trước đó trong cùng một phút).
+RATE_LIMIT_SAFETY_RATIO = 0.75
+RATE_LIMIT_MIN_EFFECTIVE = 5
+RATE_LIMIT_WINDOW_SECONDS = 60.0
+# Khi vẫn bị chặn dù đã điều tiết: chờ rồi thử lại, không bỏ cuộc ngay.
+RATE_LIMIT_COOLDOWN_SECONDS = 60.0
+MAX_RATE_LIMIT_RETRIES = 2
+
 MAX_ATTEMPTS_PER_SOURCE = 2   # vnstock đã tự retry 3 lần bên trong mỗi lần gọi
 BACKOFF_BASE_SECONDS = 2.0
 BACKOFF_MAX_SECONDS = 16.0
 
+# Biến môi trường / secret chứa API key vnstock (tùy chọn).
+VNSTOCK_API_KEY_ENV = "VNSTOCK_API_KEY"
+
+
+def effective_rate_limit(observed_limit: int | None) -> int:
+    """Hạn mức vận hành, thấp hơn hạn mức thật một biên an toàn.
+
+    Đây là chỗ DUY NHẤT áp biên an toàn. Không nhân bản phép nhân này ở nơi khác.
+    """
+    limit = int(observed_limit or RATE_LIMIT_FALLBACK_GUEST)
+    return max(RATE_LIMIT_MIN_EFFECTIVE, int(limit * RATE_LIMIT_SAFETY_RATIO))
+
+
+def requests_per_minute(has_api_key: bool = False) -> int:
+    """Hạn mức vận hành dự phòng khi chưa hỏi được client đang ở gói nào."""
+    fallback = RATE_LIMIT_FALLBACK_WITH_KEY if has_api_key else RATE_LIMIT_FALLBACK_GUEST
+    return effective_rate_limit(fallback)
+
+
+def request_spacing_seconds(has_api_key: bool = False) -> float:
+    """Khoảng cách trung bình giữa hai lượt gọi ở hạn mức vận hành."""
+    return RATE_LIMIT_WINDOW_SECONDS / requests_per_minute(has_api_key)
+
 # --- Độ dài lịch sử cần lấy --------------------------------------------------
-# VNINDEX cần đủ dài cho ROC252 cộng cửa sổ trung bình 49 phiên và z-score 252 phiên.
-INDEX_HISTORY_START = "2015-01-01"
+# VNINDEX là dữ liệu nền dài hạn: đủ cho ROC252, trung bình 49 phiên của Strength
+# và phân vị 252 phiên của biến động.
+INDEX_HISTORY_YEARS = 8
 # Cổ phiếu VN30 chỉ cần đủ để tính MA200 của chính cổ phiếu đó cộng biên an toàn.
-STOCK_HISTORY_CALENDAR_DAYS = 520
+# 430 ngày lịch (khoảng 285 phiên) phủ MA200 và lợi suất 20 phiên.
+STOCK_HISTORY_CALENDAR_DAYS = 430
 # Khi cập nhật tăng dần, lấy chồng lấn để bắt các phiên bị điều chỉnh muộn.
-INCREMENTAL_OVERLAP_DAYS = 20
+INCREMENTAL_OVERLAP_DAYS = 12
+# Số phiên tối thiểu để một mã được coi là đủ lịch sử. Suy ra từ chỉ tiêu khắt
+# khe nhất đang tính (MA dài nhất) cộng một biên nhỏ, để bảng chất lượng dữ liệu
+# và số mã hợp lệ của breadth không mâu thuẫn nhau.
+MIN_SESSIONS_FOR_FULL_HISTORY = 205
+# Dưới ngưỡng này thì coi như chưa khởi tạo được dữ liệu VN30.
+MIN_STOCKS_FOR_VALID_DATASET = 20
+# Chênh lệch ngày dữ liệu giữa các mã vượt ngưỡng này là dữ liệu không đồng bộ.
+MAX_STALE_SESSIONS = 5
+
+
+def index_history_start(today: date | None = None) -> str:
+    """Ngày bắt đầu cho lần tải chỉ số đầu tiên."""
+    today = today or date.today()
+    return (today - timedelta(days=365 * INDEX_HISTORY_YEARS)).isoformat()
+
+
+def stock_history_start(today: date | None = None) -> str:
+    """Ngày bắt đầu cho lần tải cổ phiếu đầu tiên."""
+    today = today or date.today()
+    return (today - timedelta(days=STOCK_HISTORY_CALENDAR_DAYS)).isoformat()
+
+# --- Ghi log -----------------------------------------------------------------
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+LOG_LEVEL = "INFO"
 
 # --- Trend / RORO ------------------------------------------------------------
 RORO_HORIZONS = ((63, 0.4), (126, 0.2), (189, 0.2), (252, 0.2))

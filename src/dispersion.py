@@ -34,7 +34,9 @@ def cross_sectional_dispersion(panel: pd.DataFrame, window: int, min_symbols: in
     """Độ lệch chuẩn theo lát cắt ngang của lợi suất ``window`` phiên."""
     if panel.empty:
         return pd.Series(dtype="float64")
-    returns = panel.pct_change(window)
+    # fill_method=None: một mã nghỉ giao dịch phải cho NaN, không được pad giá cũ
+    # thành lợi suất 0%. Pad làm độ lệch chuẩn theo lát cắt ngang thấp đi giả tạo.
+    returns = panel.pct_change(window, fill_method=None)
     counts = returns.notna().sum(axis=1)
     dispersion = returns.std(axis=1, ddof=1) * 100
     return dispersion.where(counts >= min_symbols).rename(f"dispersion_{window}d")

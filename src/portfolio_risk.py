@@ -1,4 +1,4 @@
-"""Lớp quản trị danh mục: chuyển trạng thái thị trường thành thông tin rủi ro.
+"""Portfolio Risk Layer: chuyển trạng thái thị trường thành thông tin rủi ro.
 
 Không có khuyến nghị mua bán cổ phiếu cụ thể. Không có tỷ trọng cố định kiểu
 "70% cổ phiếu, 30% tiền" vì repository chưa có mô hình được kiểm định để đưa ra

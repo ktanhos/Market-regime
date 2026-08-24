@@ -25,6 +25,10 @@ from typing import Sequence
 
 import requests
 
+from src.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 API = "https://api.github.com"
 TIMEOUT = 60
 TOKEN_KEY = "GITHUB_TOKEN"
@@ -51,9 +55,10 @@ def resolve_token() -> str:
         value = st.secrets.get(TOKEN_KEY, "")
         if value:
             return str(value).strip()
-    except Exception:
-        # Không chạy trong Streamlit, hoặc chưa cấu hình secrets.
-        pass
+    except (ImportError, FileNotFoundError, KeyError, AttributeError) as exc:
+        # Không chạy trong Streamlit, hoặc chưa có tệp secrets. Cả hai đều hợp lệ:
+        # đọc tiếp biến môi trường.
+        logger.debug("Không đọc được st.secrets (%s), chuyển sang biến môi trường", type(exc).__name__)
     return os.environ.get(TOKEN_KEY, "").strip()
 
 

@@ -18,11 +18,16 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 from src import config
+from src.logging_config import get_logger
 from src.schema import DATE_COLUMN, merge_history, standardize_ohlcv, validate_frame
+
+logger = get_logger(__name__)
 
 
 def ensure_dirs() -> None:
@@ -52,8 +57,10 @@ def read_frame(path: Path) -> pd.DataFrame | None:
         return None
     try:
         return standardize_ohlcv(pd.read_parquet(path))
-    except Exception:
-        # Tệp hỏng không được phép làm sập dashboard.
+    except Exception as exc:
+        # Tệp hỏng không được phép làm sập dashboard, nhưng phải để lại dấu vết
+        # thay vì biến mất im lặng.
+        logger.error("Không đọc được %s: %s: %s", path, type(exc).__name__, exc)
         return None
 
 
@@ -111,9 +118,90 @@ def last_stored_date(path: Path) -> pd.Timestamp | None:
 
 
 def available_stock_symbols() -> list[str]:
+    """Các mã đã có tệp giá trong ``data/raw/stocks``."""
     if not config.STOCK_DIR.exists():
         return []
     return sorted(p.stem.upper() for p in config.STOCK_DIR.glob("*.parquet"))
+
+
+def stock_file_count() -> int:
+    return len(available_stock_symbols())
+
+
+def legacy_stock_files() -> list[Path]:
+    """Tệp giá cổ phiếu còn sót ở bố cục cũ ``data/raw/<mã>.parquet``.
+
+    Chỉ được tồn tại đúng một đường dẫn cho giá cổ phiếu. Kiến trúc cũ ghi thẳng
+    vào ``data/raw`` nên một bản cài đặt cũ có thể còn tệp thừa ở đó; chúng phải
+    hiện ra chứ không được âm thầm nằm lại.
+    """
+    if not config.RAW_DIR.exists():
+        return []
+    reserved = {config.VNINDEX_DATASET.lower(), config.VN30_INDEX_DATASET.lower()}
+    return sorted(
+        path for path in config.RAW_DIR.glob("*.parquet") if path.stem.lower() not in reserved
+    )
+
+
+# Trạng thái dữ liệu của một mã.
+STOCK_OK = "ok"                    # có tệp và đủ lịch sử
+STOCK_SHORT = "short_history"      # có tệp nhưng chưa đủ phiên
+STOCK_MISSING = "missing_file"     # chưa có tệp
+
+
+def stock_inventory(symbols: Iterable[str], min_sessions: int | None = None) -> dict[str, dict]:
+    """Tình trạng từng mã: có tệp chưa, bao nhiêu phiên, đến ngày nào.
+
+    Đây là căn cứ để phân biệt "chưa có tệp" với "có tệp nhưng thiếu lịch sử",
+    hai tình huống rất khác nhau nhưng trước đây bị gộp làm một.
+    """
+    min_sessions = min_sessions or config.MIN_SESSIONS_FOR_FULL_HISTORY
+    inventory: dict[str, dict] = {}
+    for symbol in sorted({s.upper() for s in symbols}):
+        frame = load_stock(symbol)
+        if frame is None or frame.empty:
+            inventory[symbol] = {
+                "status": STOCK_MISSING, "rows": 0, "last_date": None, "first_date": None,
+            }
+            continue
+        dates = pd.to_datetime(frame[DATE_COLUMN])
+        rows = int(len(frame))
+        inventory[symbol] = {
+            "status": STOCK_OK if rows >= min_sessions else STOCK_SHORT,
+            "rows": rows,
+            "first_date": dates.min(),
+            "last_date": dates.max(),
+        }
+    return inventory
+
+
+def expected_data_files(symbols: Iterable[str]) -> list[Path]:
+    """Danh sách tệp mà một bộ dữ liệu đầy đủ phải có."""
+    files = [
+        index_path(config.VNINDEX_DATASET),
+        index_path(config.VN30_INDEX_DATASET),
+        config.UNIVERSE_FILE,
+        config.VNINDEX_FEATURES_FILE,
+        config.VN30_SNAPSHOT_FILE,
+        config.UPDATE_LOG_FILE,
+    ]
+    files.extend(stock_path(symbol) for symbol in sorted({s.upper() for s in symbols}))
+    return files
+
+
+def verify_data_files(symbols: Iterable[str]) -> dict:
+    """Đối chiếu tệp kỳ vọng với tệp thực sự tồn tại trên đĩa."""
+    expected = expected_data_files(symbols)
+    present = [path for path in expected if path.exists()]
+    absent = [path for path in expected if not path.exists()]
+    return {
+        "expected": expected,
+        "present": present,
+        "missing": absent,
+        "files_expected": len(expected),
+        "files_written": len(present),
+        "missing_names": [p.name for p in absent],
+    }
 
 
 # --- JSON nhỏ (danh sách VN30, nhật ký cập nhật, ảnh chụp chỉ tiêu) -----------
@@ -123,7 +211,8 @@ def read_json(path: Path) -> dict | None:
         return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.error("Không đọc được %s: %s: %s", path, type(exc).__name__, exc)
         return None
 
 
@@ -143,18 +232,13 @@ def _jsonable(value):
         return value
     if isinstance(value, (pd.Timestamp,)):
         return value.strftime("%Y-%m-%d")
-    try:
-        import numpy as np
-
-        if isinstance(value, np.floating):
-            number = float(value)
-            return number if math.isfinite(number) else None
-        if isinstance(value, np.integer):
-            return int(value)
-        if isinstance(value, np.bool_):
-            return bool(value)
-    except Exception:
-        pass
+    if isinstance(value, np.floating):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
     return str(value)
 
 
