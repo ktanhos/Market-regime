@@ -27,20 +27,34 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Ba phép thử rẻ trước khi gọi 30 mã: nếu API hỏng thì dừng ngay tại đây.
       - name: Check API connectivity first
         run: python scripts/check_api.py
 
-      - name: Update VNINDEX, VN30 and the current VN30 constituents
+      # Lấy danh sách VN30 hiện tại, hai chỉ số và giá từng cổ phiếu thành phần.
+      # Thoát khác 0 nếu dữ liệu chưa đầy đủ.
+      - name: Update VNINDEX, VN30 index and the current VN30 constituents
         run: python scripts/update_data.py
 
-      - name: Data quality report
-        if: always()
-        run: python scripts/validate_data.py || true
+      # Chốt chặn: không được commit trạng thái 0/30 cổ phiếu rồi báo thành công.
+      - name: Validate the data set before committing
+        run: python scripts/validate_data.py
 
       - name: Commit data in a single commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data
-          git diff --cached --quiet || git commit -m "Update market data"
+          git add data/raw data/reference data/processed
+          if git diff --cached --quiet; then
+            echo "Không có thay đổi dữ liệu."
+            exit 0
+          fi
+          stocks=$(git ls-files data/raw/stocks | wc -l)
+          staged=$(git diff --cached --name-only | wc -l)
+          git commit -m "Update market data ($stocks VN30 stock files, $staged files changed)"
           git push
+
+      # Chạy sau khi commit để trạng thái cuối cùng luôn hiện trong log, kể cả khi có bước hỏng.
+      - name: Data quality report
+        if: always()
+        run: python scripts/validate_data.py --report

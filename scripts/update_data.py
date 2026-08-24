@@ -35,16 +35,27 @@ def main() -> int:
         print(f"[{PHASE_LABELS.get(phase, phase):<14}{ratio * 100:5.1f}%] {message}")
 
     report = run_update(refresh_universe=not args.no_universe, progress=progress)
+
     print("-" * 78)
-    verdict = "hoàn tất" if report.completed else "chưa hoàn tất"
-    print(f"Cập nhật {verdict}: {report.success_count}/{report.total_count} nguồn.")
-    print(f"Danh sách VN30: {report.universe.get('status', '-')} "
+    print(f"Chế độ              {report.mode}" + (" (khởi tạo lần đầu)" if report.first_run else ""))
+    print(f"Danh sách VN30      {report.universe.get('status', '-')} "
           f"({report.universe.get('as_of', '-')})")
+    print(f"Chỉ số              {report.index_success}/{report.index_total} thành công")
+    print(f"Cổ phiếu VN30       {report.stock_success}/{report.stock_total} mã thành công")
+    print(f"Tệp dữ liệu         {report.files_written}/{report.files_expected}")
+    if report.stock_missing:
+        print(f"Chưa có tệp         {', '.join(report.stock_missing)}")
     if report.rate_limited:
-        print(f"CẢNH BÁO: {report.aborted_reason}")
+        print(f"CẢNH BÁO            {report.aborted_reason}")
     for failure in report.failures:
-        print(f"  LỖI {failure['symbol']:<8} [{failure['kind']}] {failure['message'][:160]}")
-    return 0 if report.success_count else 1
+        print(f"  LỖI {failure['symbol']:<10} [{failure['kind']}] {failure['message'][:150]}")
+
+    # Chạy ngoài Streamlit thì GitHub Actions lo phần commit, không đồng bộ ở đây.
+    if not report.data_complete:
+        print("\nDữ liệu chưa đầy đủ.")
+        return 1
+    print("\nDữ liệu đầy đủ.")
+    return 0
 
 
 if __name__ == "__main__":
