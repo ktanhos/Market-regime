@@ -23,7 +23,16 @@ import pandas as pd
 from src import config
 from src.schema import to_close_panel
 
-BREADTH_UNKNOWN = "CHƯA ĐỦ DỮ LIỆU"
+# Bốn tình huống rất khác nhau, trước đây bị gộp thành một nhãn duy nhất.
+BREADTH_NO_DATA = "CHƯA CÓ DỮ LIỆU"        # chưa có tệp giá nào
+BREADTH_INSUFFICIENT = "DỮ LIỆU CHƯA ĐỦ"   # có tệp nhưng thiếu lịch sử
+BREADTH_STALE = "DỮ LIỆU KHÔNG ĐỒNG BỘ"    # ngày dữ liệu giữa các mã chênh lệch lớn
+BREADTH_UNKNOWN = BREADTH_NO_DATA          # tương thích ngược
+
+DATA_OK = "ok"
+DATA_NONE = "no_data"
+DATA_INSUFFICIENT = "insufficient"
+DATA_STALE = "stale"
 
 
 def _pct_above_ma(panel: pd.DataFrame, window: int) -> dict:
@@ -78,11 +87,46 @@ def _pct_advancing(panel: pd.DataFrame, window: int) -> dict:
 
 def classify_breadth(score: float) -> str:
     if score is None or pd.isna(score):
-        return BREADTH_UNKNOWN
+        return BREADTH_NO_DATA
     for threshold, label in config.BREADTH_BANDS:
         if score < threshold:
             return label
     return config.BREADTH_TOP_LABEL
+
+
+def _date_spread(panel: pd.DataFrame) -> dict:
+    """Độ lệch ngày dữ liệu giữa các mã, tính theo số phiên trong bảng."""
+    if panel.empty:
+        return {"stale_symbols": [], "max_gap_sessions": 0}
+    positions = {timestamp: i for i, timestamp in enumerate(panel.index)}
+    latest = len(panel.index) - 1
+    stale: list[str] = []
+    worst = 0
+    for symbol in panel.columns:
+        series = panel[symbol].dropna()
+        if series.empty:
+            continue
+        gap = latest - positions[series.index[-1]]
+        worst = max(worst, gap)
+        if gap > config.MAX_STALE_SESSIONS:
+            stale.append(symbol)
+    return {"stale_symbols": sorted(stale), "max_gap_sessions": int(worst)}
+
+
+def data_state(loaded_symbols: int, strictest_valid: int, stale_symbols: list[str]) -> tuple[str, str]:
+    """Phân biệt bốn tình huống dữ liệu. Trả về (mã trạng thái, nhãn hiển thị).
+
+    ``strictest_valid`` là số mã đủ dữ liệu cho chỉ tiêu khắt khe nhất (MA200).
+    Ba mươi tệp mỗi tệp chỉ có 30 phiên vẫn tính được MA20 nhưng không tính được
+    MA200, nên đó là "chưa đủ lịch sử" chứ không phải một điểm breadth thấp.
+    """
+    if loaded_symbols == 0:
+        return DATA_NONE, BREADTH_NO_DATA
+    if strictest_valid < config.BREADTH_MIN_VALID_SYMBOLS:
+        return DATA_INSUFFICIENT, BREADTH_INSUFFICIENT
+    if stale_symbols:
+        return DATA_STALE, BREADTH_STALE
+    return DATA_OK, ""
 
 
 def symbol_table(panel: pd.DataFrame) -> pd.DataFrame:
@@ -124,10 +168,17 @@ def compute_breadth(frames: dict[str, pd.DataFrame], universe: list[str]) -> dic
         "missing_symbols": [s for s in universe if s not in panel.columns],
         "components": {},
         "score": np.nan,
-        "state": BREADTH_UNKNOWN,
+        "state": BREADTH_NO_DATA,
+        "data_state": DATA_NONE,
+        "stale_symbols": [],
+        "max_gap_sessions": 0,
+        "valid_symbols": 0,
+        "min_valid_symbols": 0,
+        "max_valid_symbols": 0,
         "as_of": None,
         "table": pd.DataFrame(),
         "sufficient": False,
+        "panel": panel,
     }
     if panel.empty:
         return result
@@ -140,18 +191,26 @@ def compute_breadth(frames: dict[str, pd.DataFrame], universe: list[str]) -> dic
         components[f"ret{window}"] = _pct_advancing(panel, window)
     result["components"] = components
 
-    values = [c["pct"] for c in components.values() if pd.notna(c["pct"])]
-    if values:
-        result["score"] = float(np.mean(values))
-        result["state"] = classify_breadth(result["score"])
-
     # Số mã hợp lệ hiển thị cho người dùng: số mã đủ dữ liệu cho chỉ tiêu
     # khắt khe nhất đang được tính (MA dài nhất).
     strictest = components.get(f"ma{max(config.BREADTH_MA_WINDOWS)}", {})
     result["valid_symbols"] = int(strictest.get("valid", 0))
     result["min_valid_symbols"] = int(min((c["valid"] for c in components.values()), default=0))
     result["max_valid_symbols"] = int(max((c["valid"] for c in components.values()), default=0))
-    result["sufficient"] = result["max_valid_symbols"] >= config.BREADTH_MIN_VALID_SYMBOLS
+    spread = _date_spread(panel)
+    result.update(spread)
+    state_code, state_label = data_state(
+        result["loaded_symbols"], result["min_valid_symbols"], spread["stale_symbols"]
+    )
+    result["data_state"] = state_code
+    # Dữ liệu lệch ngày vẫn tính được số liệu, chỉ cần cảnh báo kèm theo.
+    result["sufficient"] = state_code in (DATA_OK, DATA_STALE)
+
+    values = [c["pct"] for c in components.values() if pd.notna(c["pct"])]
+    if values:
+        result["score"] = float(np.mean(values))
+    result["state"] = classify_breadth(result["score"]) if state_code == DATA_OK else state_label
+
     result["table"] = symbol_table(panel)
     result["panel"] = panel
     return result
