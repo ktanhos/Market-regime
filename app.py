@@ -40,6 +40,7 @@ from src.updater import (
     SYNC_FAILED,
     SYNC_SKIPPED,
     SYNC_SUCCESS,
+    SYNC_VIA_CI,
     record_sync,
     run_update,
 )
@@ -352,10 +353,11 @@ def render_update_result(sb, report) -> None:
     index_ok = report.index_success == report.index_total and report.index_total > 0
     stock_ok = report.stock_success == report.stock_total and report.stock_total > 0
     sync_tone = {
-        SYNC_SUCCESS: GOOD, SYNC_SKIPPED: WARN, SYNC_FAILED: BAD,
+        SYNC_SUCCESS: GOOD, SYNC_VIA_CI: GOOD, SYNC_SKIPPED: WARN, SYNC_FAILED: BAD,
     }.get(report.sync_status, NONE)
     sync_text = {
         SYNC_SUCCESS: f"{report.sync_files} tệp trong một commit",
+        SYNC_VIA_CI: f"{report.sync_files} tệp, do workflow commit",
         SYNC_SKIPPED: "không có thay đổi để đồng bộ",
         SYNC_FAILED: "thất bại",
     }.get(report.sync_status, "chưa chạy")
@@ -715,12 +717,13 @@ def render_quality(state: dict) -> None:
 
     sync_label = {
         SYNC_SUCCESS: f"thành công · {summary['sync_files']} tệp",
+        SYNC_VIA_CI: f"workflow đã commit · {summary['sync_files']} tệp",
         SYNC_SKIPPED: "không có thay đổi",
         SYNC_FAILED: "thất bại",
     }.get(summary["sync_status"], "chưa chạy")
-    sync_tone = {SYNC_SUCCESS: GOOD, SYNC_SKIPPED: WARN, SYNC_FAILED: BAD}.get(
-        summary["sync_status"], NONE
-    )
+    sync_tone = {
+        SYNC_SUCCESS: GOOD, SYNC_VIA_CI: GOOD, SYNC_SKIPPED: WARN, SYNC_FAILED: BAD,
+    }.get(summary["sync_status"], NONE)
 
     detail = (
         row("Ngày dữ liệu", fmt_date(summary["index_last_date"]))

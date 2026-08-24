@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT))
 
 from src import features, universe as universe_module
 from src.logging_config import setup
-from src.updater import PHASE_LABELS, run_update
+from src.updater import PHASE_LABELS, SYNC_VIA_CI, record_sync, run_update
 
 
 def main() -> int:
@@ -50,7 +50,11 @@ def main() -> int:
     for failure in report.failures:
         print(f"  LỖI {failure['symbol']:<10} [{failure['kind']}] {failure['message'][:150]}")
 
-    # Chạy ngoài Streamlit thì GitHub Actions lo phần commit, không đồng bộ ở đây.
+    # Chạy ngoài Streamlit thì bước commit của workflow mới là nơi lưu dữ liệu.
+    # Ghi lại điều đó để nhật ký không báo "chưa đồng bộ" một cách sai lệch.
+    record_sync(report, SYNC_VIA_CI, report.files_written,
+                "Dữ liệu được commit bởi workflow, không qua sync_files.")
+
     if not report.data_complete:
         print("\nDữ liệu chưa đầy đủ.")
         return 1

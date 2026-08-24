@@ -70,10 +70,14 @@ PHASE_LABELS = {
     PHASE_SYNC: "GitHub",
 }
 
-SYNC_SUCCESS = "success"
-SYNC_SKIPPED = "skipped"
-SYNC_FAILED = "failed"
-SYNC_NOT_RUN = "not_run"
+SYNC_SUCCESS = "success"      # app đã đẩy dữ liệu lên GitHub trong một commit
+SYNC_SKIPPED = "skipped"      # không có thay đổi nào để đẩy
+SYNC_FAILED = "failed"        # đã thử và hỏng
+SYNC_VIA_CI = "via_ci"        # workflow tự commit, app không cần đồng bộ
+SYNC_NOT_RUN = "not_run"      # chưa tới bước đồng bộ
+
+# Dữ liệu được coi là đã lưu bền khi thuộc một trong các trạng thái này.
+SYNC_PERSISTED = (SYNC_SUCCESS, SYNC_SKIPPED, SYNC_VIA_CI)
 
 MODE_FIRST_RUN = "first_run"
 MODE_PARTIAL = "partial_bootstrap"
@@ -187,8 +191,13 @@ class UpdateReport:
 
     @property
     def completed(self) -> bool:
-        """Chỉ hoàn tất khi dữ liệu đủ VÀ đã đồng bộ được lên GitHub."""
-        return self.data_complete and self.sync_status == SYNC_SUCCESS
+        """Chỉ hoàn tất khi dữ liệu đủ VÀ đã được lưu bền.
+
+        "Lưu bền" gồm cả trường hợp workflow tự commit: khi chạy trong GitHub
+        Actions thì bước commit của workflow mới là nơi giữ dữ liệu, không phải
+        ``sync_files``.
+        """
+        return self.data_complete and self.sync_status in SYNC_PERSISTED
 
     def as_dict(self) -> dict:
         return {

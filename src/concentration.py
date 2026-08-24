@@ -37,7 +37,9 @@ _STATE_MAP = {
 def realised_volatility(panel: pd.DataFrame, window: int | None = None) -> pd.DataFrame:
     """Biến động quy năm theo cửa sổ trượt cho từng mã, đơn vị phần trăm."""
     window = window or config.VOLATILITY_WINDOW
-    returns = panel.pct_change()
+    # fill_method=None: phiên thiếu dữ liệu phải là NaN chứ không phải lợi suất 0%,
+    # nếu không biến động của mã đó bị ước lượng thấp đi.
+    returns = panel.pct_change(fill_method=None)
     return returns.rolling(window, min_periods=window).std() * np.sqrt(config.ANNUALIZATION) * 100
 
 

@@ -178,3 +178,23 @@ def test_expected_file_structure_exists():
                  "breadth", "dispersion", "concentration", "trend", "stress", "regime",
                  "portfolio_risk", "github_store"):
         assert (SRC / f"{name}.py").exists(), f"Thiếu src/{name}.py"
+
+
+def test_full_history_threshold_matches_the_longest_indicator():
+    """Ngưỡng 'đủ lịch sử' không được thấp hơn chỉ tiêu khắt khe nhất đang tính."""
+    from src import config
+
+    longest = max(config.BREADTH_MA_WINDOWS)
+    assert config.MIN_SESSIONS_FOR_FULL_HISTORY >= longest
+    # Cũng không được cao hơn nhiều, nếu không bảng chất lượng sẽ báo "thiếu lịch
+    # sử" cho những mã mà breadth vẫn tính được đầy đủ.
+    assert config.MIN_SESSIONS_FOR_FULL_HISTORY <= longest + 10
+
+
+def test_returns_never_forward_fill_missing_sessions():
+    """pandas mặc định pad NaN trước khi tính pct_change, làm sai lợi suất."""
+    for name in ("dispersion", "concentration"):
+        text = (SRC / f"{name}.py").read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if "pct_change(" in line and not line.strip().startswith("#"):
+                assert "fill_method=None" in line, f"{name}.py: {line.strip()}"
