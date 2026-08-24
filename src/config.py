@@ -40,10 +40,35 @@ INDEX_SOURCES = {
 }
 
 # --- Tần suất gọi API --------------------------------------------------------
-REQUEST_DELAY_SECONDS = 1.2   # nghỉ giữa hai mã, gọi tuần tự, không song song
+# Nguồn dữ liệu giới hạn số lượt gọi theo phút. Gói Khách (không API key) chỉ
+# cho 20 lượt/phút; API key miễn phí nâng lên 60. Đây là con số quan sát được
+# từ chính thông báo của vnstock khi bị chặn, không phải phỏng đoán.
+#
+# Đặt thấp hơn hạn mức thật để chừa chỗ cho các lượt gọi ngoài pipeline
+# (ví dụ scripts/check_api.py chạy ngay trước đó trong cùng một phút).
+REQUESTS_PER_MINUTE_GUEST = 15
+REQUESTS_PER_MINUTE_WITH_KEY = 45
+RATE_LIMIT_WINDOW_SECONDS = 60.0
+# Khi vẫn bị chặn dù đã điều tiết: chờ rồi thử lại, không bỏ cuộc ngay.
+RATE_LIMIT_COOLDOWN_SECONDS = 60.0
+MAX_RATE_LIMIT_RETRIES = 2
+REQUEST_DELAY_SECONDS = RATE_LIMIT_WINDOW_SECONDS / REQUESTS_PER_MINUTE_GUEST
+
 MAX_ATTEMPTS_PER_SOURCE = 2   # vnstock đã tự retry 3 lần bên trong mỗi lần gọi
 BACKOFF_BASE_SECONDS = 2.0
 BACKOFF_MAX_SECONDS = 16.0
+
+# Biến môi trường / secret chứa API key vnstock (tùy chọn).
+VNSTOCK_API_KEY_ENV = "VNSTOCK_API_KEY"
+
+
+def requests_per_minute(has_api_key: bool = False) -> int:
+    return REQUESTS_PER_MINUTE_WITH_KEY if has_api_key else REQUESTS_PER_MINUTE_GUEST
+
+
+def request_spacing_seconds(has_api_key: bool = False) -> float:
+    """Khoảng cách tối thiểu giữa hai lượt gọi để không vượt hạn mức."""
+    return RATE_LIMIT_WINDOW_SECONDS / requests_per_minute(has_api_key)
 
 # --- Độ dài lịch sử cần lấy --------------------------------------------------
 # VNINDEX là dữ liệu nền dài hạn: đủ cho ROC252, trung bình 49 phiên của Strength

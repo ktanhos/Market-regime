@@ -16,6 +16,11 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
+    env:
+      # Tùy chọn. API key nâng hạn mức của nguồn từ 20 lên 60 lượt/phút.
+      # Không có key vẫn chạy được, chỉ là pipeline đi chậm hơn.
+      VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +36,15 @@ jobs:
       - name: Check API connectivity first
         run: python scripts/check_api.py
 
+      # Ba lượt gọi trên nằm cùng cửa sổ một phút với pipeline. Nguồn giới hạn
+      # 20 lượt/phút cho gói Khách nên phải để cửa sổ trôi qua trước khi chạy tiếp.
+      - name: Let the API rate-limit window clear
+        run: sleep 60
+
       # Lấy danh sách VN30 hiện tại, hai chỉ số và giá từng cổ phiếu thành phần.
       # Thoát khác 0 nếu dữ liệu chưa đầy đủ.
       - name: Update VNINDEX, VN30 index and the current VN30 constituents
+        timeout-minutes: 30
         run: python scripts/update_data.py
 
       # Chốt chặn: không được commit trạng thái 0/30 cổ phiếu rồi báo thành công.
@@ -54,7 +65,8 @@ jobs:
           git commit -m "Update market data ($stocks VN30 stock files, $staged files changed)"
           git push
 
-      # Chạy sau khi commit để trạng thái cuối cùng luôn hiện trong log, kể cả khi có bước hỏng.
+      # Chạy sau khi commit để trạng thái cuối cùng luôn hiện trong log,
+      # kể cả khi có bước phía trên thất bại.
       - name: Data quality report
         if: always()
         run: python scripts/validate_data.py --report

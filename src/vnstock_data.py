@@ -33,11 +33,22 @@ Giới hạn nguồn dữ liệu, đọc trực tiếp từ gói đã cài:
 * Không nguồn nào có endpoint lấy lịch sử nhiều mã trong một lần gọi.
   ``Trading.price_board`` nhận danh sách mã nhưng chỉ trả bảng giá tại thời
   điểm hiện tại, không có lịch sử, nên không thay thế được vòng lặp tuần tự.
+
+Hạn mức truy cập, lấy từ chính thông báo của vnstock khi bị chặn::
+
+    Gói Khách (không API key):  20 lượt/phút
+    API key miễn phí:           60 lượt/phút
+
+Một lượt khởi tạo cần 33 lượt gọi (1 danh sách + 2 chỉ số + 30 cổ phiếu), nên
+phải điều tiết theo phút chứ không chỉ nghỉ giữa hai lượt. ``RateLimiter`` bên
+dưới giữ nhịp bằng cửa sổ trượt; nếu vẫn bị chặn thì chờ hết chu kỳ rồi thử lại.
 """
 
 from __future__ import annotations
 
+import os
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Callable, Sequence
@@ -49,6 +60,79 @@ from src.logging_config import get_logger
 from src.schema import CANONICAL_COLUMNS, DataQualityError, standardize_ohlcv
 
 logger = get_logger(__name__)
+
+
+def has_api_key() -> bool:
+    """Có API key vnstock trong môi trường hay không.
+
+    Không có key vẫn chạy được, chỉ là hạn mức thấp hơn nên pipeline đi chậm hơn.
+    """
+    return bool(os.environ.get(config.VNSTOCK_API_KEY_ENV, "").strip())
+
+
+def register_api_key() -> bool:
+    """Đăng ký API key nếu môi trường có cấu hình. Trả về True nếu đã đăng ký."""
+    key = os.environ.get(config.VNSTOCK_API_KEY_ENV, "").strip()
+    if not key:
+        return False
+    try:
+        from vnstock import register_user
+
+        register_user(api_key=key)
+        logger.info("Đã đăng ký API key vnstock, hạn mức truy cập cao hơn")
+        return True
+    except Exception as exc:
+        logger.warning("Không đăng ký được API key vnstock: %s", str(exc)[:200])
+        return False
+
+
+class RateLimiter:
+    """Điều tiết số lượt gọi theo cửa sổ trượt một phút.
+
+    Nghỉ cố định giữa hai lượt là không đủ: hạn mức của nguồn tính theo phút,
+    nên phải đếm số lượt trong cửa sổ và chờ đúng lúc cần chờ.
+    """
+
+    def __init__(
+        self,
+        max_calls: int | None = None,
+        window: float = config.RATE_LIMIT_WINDOW_SECONDS,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self.max_calls = max_calls or config.requests_per_minute(has_api_key())
+        self.window = window
+        self._sleep = sleep
+        self._clock = clock
+        self._calls: deque[float] = deque()
+
+    def acquire(self) -> float:
+        """Chờ tới khi được phép gọi. Trả về số giây đã chờ."""
+        now = self._clock()
+        while self._calls and now - self._calls[0] >= self.window:
+            self._calls.popleft()
+
+        waited = 0.0
+        if len(self._calls) >= self.max_calls:
+            wait = self.window - (now - self._calls[0]) + 0.05
+            if wait > 0:
+                logger.info("Điều tiết truy cập: chờ %.1f giây", wait)
+                self._sleep(wait)
+                waited = wait
+                now = self._clock()
+                while self._calls and now - self._calls[0] >= self.window:
+                    self._calls.popleft()
+
+        self._calls.append(now)
+        return waited
+
+    def cool_down(self, seconds: float | None = None) -> None:
+        """Chờ hết một chu kỳ sau khi bị nguồn từ chối."""
+        seconds = seconds if seconds is not None else config.RATE_LIMIT_COOLDOWN_SECONDS
+        logger.warning("Bị giới hạn truy cập, chờ %.0f giây rồi thử lại", seconds)
+        self._sleep(seconds)
+        self._calls.clear()
+
 
 ASSET_INDEX = "index"
 ASSET_STOCK = "stock"
@@ -238,12 +322,14 @@ def fetch_history(
     max_attempts: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     caller: Callable[..., pd.DataFrame] | None = None,
+    limiter: "RateLimiter | None" = None,
 ) -> FetchResult:
-    """Lấy lịch sử giá của một mã: tuần tự, có backoff, không thử lại vô hạn.
+    """Lấy lịch sử giá của một mã: tuần tự, có điều tiết, không thử lại vô hạn.
 
     Thứ tự xử lý lỗi:
 
-    * ``rate_limited``          -> dừng ngay, ném lỗi để tầng trên hủy cả lượt chạy.
+    * ``rate_limited``          -> chờ hết chu kỳ rồi thử lại, tối đa
+      ``MAX_RATE_LIMIT_RETRIES`` lần; hết lượt mới báo lỗi lên tầng trên.
     * ``permanent``/``dependency`` -> chuyển sang nguồn kế tiếp, không lặp lại nguồn cũ.
     * ``transient``/``empty``   -> thử lại tối đa ``max_attempts`` lần với backoff mũ.
 
@@ -257,10 +343,15 @@ def fetch_history(
 
     errors: list[str] = []
     attempts = 0
+    rate_limit_retries = 0
 
     for source in sources:
-        for attempt in range(1, max_attempts + 1):
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
             attempts += 1
+            if limiter is not None:
+                limiter.acquire()
             try:
                 frame = call(symbol, source, start, end)
                 if frame.empty:
@@ -276,6 +367,14 @@ def fetch_history(
                 errors.append(f"{source}: {type(exc).__name__}: {str(exc)[:200]}")
                 logger.warning("Lỗi lấy %s từ %s [%s]: %s", symbol, source, kind, str(exc)[:200])
                 if kind == RATE_LIMITED:
+                    if rate_limit_retries < config.MAX_RATE_LIMIT_RETRIES:
+                        rate_limit_retries += 1
+                        if limiter is not None:
+                            limiter.cool_down()
+                        else:
+                            sleep(config.RATE_LIMIT_COOLDOWN_SECONDS)
+                        attempt -= 1   # lần chờ không tính là một lượt thử của nguồn
+                        continue
                     raise FetchError(
                         f"{friendly_message(RATE_LIMITED)} ({source})",
                         RATE_LIMITED,
@@ -298,6 +397,11 @@ def fetch_history(
         symbol=symbol,
         source=",".join(sources),
     )
+
+
+def make_limiter(sleep: Callable[[float], None] = time.sleep) -> RateLimiter:
+    """Bộ điều tiết dùng cho cả một lượt chạy."""
+    return RateLimiter(sleep=sleep)
 
 
 def fetch_index(symbol: str, start: str, end: str | None = None, **kwargs) -> FetchResult:
@@ -366,10 +470,13 @@ def connectivity_check(sleep: Callable[[float], None] = time.sleep) -> list[Prob
     start = (date.today() - timedelta(days=30)).isoformat()
     end = date.today().isoformat()
     results: list[ProbeResult] = []
+    limiter = RateLimiter(sleep=sleep)
 
     for symbol, asset_type in (("VNINDEX", ASSET_INDEX), ("FPT", ASSET_STOCK)):
         try:
-            result = fetch_history(symbol, start=start, end=end, asset_type=asset_type, sleep=sleep)
+            result = fetch_history(
+                symbol, start=start, end=end, asset_type=asset_type, sleep=sleep, limiter=limiter
+            )
             results.append(
                 ProbeResult(
                     name=symbol,
@@ -387,9 +494,9 @@ def connectivity_check(sleep: Callable[[float], None] = time.sleep) -> list[Prob
                 ProbeResult(name=symbol, ok=False, source=exc.source, kind=exc.kind,
                             error=str(exc)[:300], detail=friendly_message(exc.kind))
             )
-        sleep(config.REQUEST_DELAY_SECONDS)
 
     try:
+        limiter.acquire()
         members = fetch_index_members("VN30")
         results.append(
             ProbeResult(

@@ -45,6 +45,8 @@ from src.vnstock_data import (
     fetch_history,
     fetch_index_members,
     friendly_message,
+    make_limiter,
+    register_api_key,
     vnstock_version,
 )
 
@@ -238,6 +240,7 @@ def _update_one(
     fetcher: Callable,
     sleep: Callable[[float], None],
     min_rows: int,
+    limiter=None,
 ) -> dict:
     """Cập nhật một tập dữ liệu và trả về báo cáo chất lượng.
 
@@ -246,7 +249,7 @@ def _update_one(
     """
     last = storage.last_stored_date(path)
     start = default_start(asset_type, last)
-    result = fetcher(symbol, start=start, end=end, asset_type=asset_type, sleep=sleep)
+    result = fetcher(symbol, start=start, end=end, asset_type=asset_type, sleep=sleep, limiter=limiter)
     report = storage.merge_and_write(path, result.frame, min_rows=min_rows)
     report.update(
         name=name,
@@ -335,6 +338,7 @@ def run_update(
     fetcher: Callable = fetch_history,
     universe_fetcher: Callable = fetch_index_members,
     end: str | None = None,
+    limiter=None,
 ) -> UpdateReport:
     """Chạy toàn bộ pipeline cập nhật.
 
@@ -349,6 +353,11 @@ def run_update(
     )
     storage.ensure_dirs()
     end = end or date.today().isoformat()
+    register_api_key()
+    # Một bộ điều tiết dùng chung cho cả lượt chạy: hạn mức của nguồn tính theo
+    # phút nên không thể chỉ nghỉ giữa hai lượt gọi.
+    limiter = limiter if limiter is not None else make_limiter(sleep)
+    logger.info("Điều tiết ở mức %d lượt/phút", limiter.max_calls)
 
     legacy = storage.legacy_stock_files()
     if legacy:
@@ -390,15 +399,13 @@ def run_update(
         try:
             info = _update_one(
                 label, symbol, ASSET_INDEX, storage.index_path(dataset),
-                end, fetcher, sleep, min_rows=100,
+                end, fetcher, sleep, min_rows=100, limiter=limiter,
             )
             report.datasets.append(info)
             report.index_success += 1
         except Exception as exc:
             stopped = _record_failure(report, label, exc)
         notify(phase, 1.0, f"Xong {label}")
-        if not stopped:
-            sleep(config.REQUEST_DELAY_SECONDS)
 
     # --- Bước 4: từng cổ phiếu VN30 ------------------------------------------
     if not stopped and symbols:
@@ -408,7 +415,7 @@ def run_update(
             try:
                 info = _update_one(
                     symbol, symbol, ASSET_STOCK, storage.stock_path(symbol),
-                    end, fetcher, sleep, min_rows=20,
+                    end, fetcher, sleep, min_rows=20, limiter=limiter,
                 )
                 report.datasets.append(info)
                 report.stock_success += 1
@@ -421,8 +428,6 @@ def run_update(
                         "Các mã đã lấy được vẫn được giữ lại, lần cập nhật sau sẽ tiếp tục phần còn thiếu."
                     )
                     break
-            if i < len(symbols):
-                sleep(config.REQUEST_DELAY_SECONDS)
     notify(PHASE_STOCKS, 1.0, f"{report.stock_success}/{report.stock_total} mã")
 
     # --- Bước 5: tính lại chỉ tiêu -------------------------------------------

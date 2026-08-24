@@ -84,6 +84,28 @@ Ba chế độ được ghi vào `update_log.json`:
 Một lượt chạy chỉ được coi là **hoàn tất** khi mọi nguồn thành công, mọi tệp kỳ
 vọng đều tồn tại trên đĩa, và đã đồng bộ được lên GitHub.
 
+### Hạn mức truy cập
+
+Nguồn dữ liệu giới hạn số lượt gọi **theo phút**, không phải theo khoảng cách
+giữa hai lượt:
+
+| Gói | Hạn mức |
+|---|---|
+| Khách, không API key | 20 lượt/phút |
+| API key miễn phí | 60 lượt/phút |
+
+Một lượt khởi tạo cần 33 lượt gọi (1 danh sách + 2 chỉ số + 30 cổ phiếu), nên
+`RateLimiter` điều tiết bằng cửa sổ trượt một phút thay vì chỉ nghỉ giữa hai
+lượt. Mặc định đặt dưới hạn mức thật để chừa chỗ cho `scripts/check_api.py` chạy
+trước đó.
+
+Nếu vẫn bị chặn, pipeline **chờ hết chu kỳ rồi thử lại** tối đa
+`MAX_RATE_LIMIT_RETRIES` lần. Chỉ khi hết lượt mới dừng, và phần dữ liệu đã lấy
+được vẫn giữ nguyên.
+
+Muốn chạy nhanh hơn thì đặt biến môi trường `VNSTOCK_API_KEY` (hoặc secret cùng
+tên trong GitHub Actions). Không có key vẫn chạy bình thường.
+
 ## Luồng dữ liệu
 
 ```text
