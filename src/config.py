@@ -54,6 +54,12 @@ INDEX_HISTORY_YEARS = 8
 STOCK_HISTORY_CALENDAR_DAYS = 430
 # Khi cập nhật tăng dần, lấy chồng lấn để bắt các phiên bị điều chỉnh muộn.
 INCREMENTAL_OVERLAP_DAYS = 12
+# Số phiên tối thiểu để một mã được coi là đủ lịch sử (MA200 cộng biên an toàn).
+MIN_SESSIONS_FOR_FULL_HISTORY = 210
+# Dưới ngưỡng này thì coi như chưa khởi tạo được dữ liệu VN30.
+MIN_STOCKS_FOR_VALID_DATASET = 20
+# Chênh lệch ngày dữ liệu giữa các mã vượt ngưỡng này là dữ liệu không đồng bộ.
+MAX_STALE_SESSIONS = 5
 
 
 def index_history_start(today: date | None = None) -> str:
