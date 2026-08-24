@@ -59,6 +59,31 @@ nguồn, nên chúng không thể mục nát theo thời gian.
    tệp dữ liệu lên GitHub trong **đúng một commit**.
 4. **VN30 hiện tại không phải VN30 lịch sử.** Xem phần dưới.
 
+## Khởi tạo dữ liệu lần đầu
+
+Kho dữ liệu trong repository chỉ có sẵn hai chỉ số. Giá cổ phiếu VN30 phải được
+tải về ở lần chạy đầu tiên, và pipeline tự nhận biết điều đó.
+
+Quyết định nằm ở **từng mã**, không phải ở cả lượt chạy:
+
+| Tình trạng `data/raw/stocks/<MÃ>.parquet` | Hành động |
+|---|---|
+| chưa có tệp | lấy đủ 430 ngày lịch để tính được MA200 của chính mã đó |
+| đã có tệp | chỉ lấy từ ngày cuối cùng trừ 12 ngày chồng lấn |
+
+Nhờ vậy 27 mã đã có và 3 mã còn thiếu sẽ cho 27 lượt cập nhật tăng dần cộng 3
+lượt tải đủ lịch sử. Đây cũng là cách một lượt chạy bị API giới hạn truy cập tiếp
+tục ở lần sau: phần đã lấy được giữ nguyên, không tải lại từ đầu.
+
+Ba chế độ được ghi vào `update_log.json`:
+
+* `first_run` — chưa có tệp cổ phiếu nào
+* `partial_bootstrap` — có một phần, còn thiếu hoặc thiếu lịch sử
+* `incremental` — đã đủ, chỉ cập nhật phần mới
+
+Một lượt chạy chỉ được coi là **hoàn tất** khi mọi nguồn thành công, mọi tệp kỳ
+vọng đều tồn tại trên đĩa, và đã đồng bộ được lên GitHub.
+
 ## Luồng dữ liệu
 
 ```text
@@ -240,6 +265,10 @@ Bộ test không chạm mạng. Lớp gọi API được kiểm thử qua bộ g
 huống: nguồn lỗi tạm thời, nguồn không hỗ trợ mã, rate limit, dữ liệu rỗng,
 thiếu một mã, ngày trùng lặp, mất toàn bộ dữ liệu và tệp parquet hỏng.
 
+`tests/test_bootstrap.py` chạy đủ các tình huống khởi tạo: lần đầu từ thư mục
+rỗng, khởi tạo bổ sung, tệp thiếu lịch sử, một mã lỗi, bị giới hạn truy cập giữa
+chừng và lượt chạy tiếp theo.
+
 `tests/test_architecture.py` phân tích AST của mã nguồn để bảo đảm: chỉ
 `vnstock_data.py` import vnstock, phụ thuộc giữa các tầng chỉ đi xuống, không có
 import vòng, không còn lối vào vnstock cũ, không có đường dẫn hardcode, và các
@@ -250,6 +279,9 @@ Kết nối thật tới vnstock được xác minh riêng bằng workflow
 
 ## Giới hạn hiện tại
 
+* Giá cổ phiếu VN30 chỉ nằm ở `data/raw/stocks/<MÃ>.parquet`, viết hoa, một
+  đường dẫn duy nhất. `scripts/validate_data.py` báo lỗi nếu còn tệp ở bố cục cũ
+  `data/raw/<mã>.parquet`.
 * Không có dữ liệu thành phần VN30 lịch sử → không có breadth, dispersion hay
   regime lịch sử của VN30.
 * Không có dữ liệu phái sinh ổn định → chỉ số căng thẳng chỉ dùng biến động
