@@ -16,8 +16,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src import config
+from src.credentials import resolve_vnstock_api_key
 from src.logging_config import setup
-from src.vnstock_data import connectivity_check, expected_schema, vnstock_version
+from src.vnstock_data import (
+    api_access,
+    connectivity_check,
+    expected_schema,
+    make_limiter,
+    vnstock_version,
+)
 
 
 def main() -> int:
@@ -26,9 +33,16 @@ def main() -> int:
     print("API: Quote(symbol=..., source=...).history(start=..., end=..., interval='1D')")
     print("     Listing(source=...).symbols_by_group('VN30')")
     print("Schema kỳ vọng: " + ", ".join(expected_schema()))
-    print("-" * 78)
 
-    probes = connectivity_check()
+    credentials = resolve_vnstock_api_key()
+    with api_access(credentials) as access:
+        print(
+            f"Gói truy cập: {access.tier} · hạn mức {access.observed_limit} lượt/phút · "
+            f"vận hành {access.effective_limit} lượt/phút"
+            + (f" · khóa từ {access.source_label}" if access.configured else "")
+        )
+        print("-" * 78)
+        probes = connectivity_check(limiter=make_limiter(access=access))
     for probe in probes:
         verdict = "SUCCESS" if probe.ok else "FAILED "
         print(f"[{verdict}] {probe.name}")

@@ -93,6 +93,7 @@ giữa hai lượt:
 |---|---|
 | Khách, không API key | 20 lượt/phút |
 | API key miễn phí | 60 lượt/phút |
+| Các gói tài trợ | 180 – 600 lượt/phút |
 
 Một lượt khởi tạo cần 33 lượt gọi (1 danh sách + 2 chỉ số + 30 cổ phiếu), nên
 `RateLimiter` điều tiết bằng cửa sổ trượt một phút thay vì chỉ nghỉ giữa hai
@@ -103,8 +104,40 @@ Nếu vẫn bị chặn, pipeline **chờ hết chu kỳ rồi thử lại** t�
 `MAX_RATE_LIMIT_RETRIES` lần. Chỉ khi hết lượt mới dừng, và phần dữ liệu đã lấy
 được vẫn giữ nguyên.
 
-Muốn chạy nhanh hơn thì đặt biến môi trường `VNSTOCK_API_KEY` (hoặc secret cùng
-tên trong GitHub Actions). Không có key vẫn chạy bình thường.
+### API key
+
+Khóa được xác định ở đúng một chỗ, theo thứ tự ưu tiên:
+
+1. Khóa nhập trong phiên Streamlit (thanh bên → **KẾT NỐI DỮ LIỆU**)
+2. `st.secrets["VNSTOCK_API_KEY"]`
+3. Biến môi trường `VNSTOCK_API_KEY`
+4. Không có khóa → chạy ở gói Khách
+
+Đã cấu hình Secrets thì **không cần nhập gì trong giao diện**. Ô nhập chỉ để thử
+một khóa khác trong phiên hiện tại; giá trị đó nằm trong `st.session_state`,
+không ghi xuống tệp, không vào dữ liệu, không lên GitHub.
+
+**Streamlit Cloud** — App settings → Secrets:
+
+```toml
+VNSTOCK_API_KEY = "YOUR_KEY"
+```
+
+**GitHub Actions** — Repository Settings → Secrets and variables → Actions →
+New repository secret → tên `VNSTOCK_API_KEY`. Workflow vẫn chạy bình thường khi
+secret chưa tồn tại, chỉ ở hạn mức gói Khách.
+
+**Local**:
+
+```bash
+export VNSTOCK_API_KEY="YOUR_KEY"
+```
+
+Hạn mức không được suy ra từ việc biến môi trường có tồn tại hay không. Sau khi
+áp khóa, hệ thống hỏi lại chính client xem nó đang ở gói nào
+(`vnai.beam.auth.authenticator`) rồi mới lấy hạn mức từ đó, nên không thể xảy ra
+chuyện chạy ở 60 lượt/phút trong khi client vẫn ở gói Khách. Nếu nguồn vẫn từ
+chối dù đã điều tiết, bộ điều tiết tự hạ về mức của gói Khách.
 
 ## Luồng dữ liệu
 

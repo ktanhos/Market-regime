@@ -198,3 +198,75 @@ def test_returns_never_forward_fill_missing_sessions():
         for line in text.splitlines():
             if "pct_change(" in line and not line.strip().startswith("#"):
                 assert "fill_method=None" in line, f"{name}.py: {line.strip()}"
+
+
+def _reads_streamlit_secrets(path: Path) -> bool:
+    """Có truy cập ``st.secrets`` trong MÃ hay không (bỏ qua chú thích, docstring)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "secrets"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "st"
+        ):
+            return True
+    return False
+
+
+def test_only_the_ui_layer_reads_streamlit_secrets():
+    """st.secrets là ranh giới của app.py, src/ không được phụ thuộc vào nó."""
+    offenders = [
+        path.name
+        for path in sorted(SRC.glob("*.py"))
+        # github_store đọc GITHUB_TOKEN và đã có fallback biến môi trường rõ ràng.
+        if path.name != "github_store.py" and _reads_streamlit_secrets(path)
+    ]
+    assert offenders == [], f"Các module này đọc st.secrets: {offenders}"
+
+
+def test_credentials_module_depends_on_nothing_heavy():
+    """Bộ giải khóa phải thuần stdlib: không Streamlit, không vnstock."""
+    packages = top_level_packages(SRC / "credentials.py")
+    assert "streamlit" not in packages
+    assert "vnstock" not in packages
+    assert "vnai" not in packages
+
+
+def test_the_app_never_writes_the_api_key_into_the_environment():
+    """Việc cấu hình client thuộc tầng dữ liệu, không phải tầng giao diện."""
+    text = (ROOT / "app.py").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        assert "os.environ[" not in stripped, f"app.py đặt biến môi trường: {stripped}"
+        assert "environ.setdefault" not in stripped
+
+
+def test_exactly_one_rate_limiter_class_exists():
+    """Không được có cơ chế điều tiết thứ hai chạy song song."""
+    definitions = []
+    for path in sorted(SRC.glob("*.py")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("class ") and "RateLimiter" in line:
+                definitions.append(f"{path.name}: {line.strip()}")
+    assert len(definitions) == 1, f"Có {len(definitions)} lớp điều tiết: {definitions}"
+
+
+def test_no_fixed_sleep_replaces_the_rate_limiter():
+    """Không quay lại nghỉ cố định theo việc có hay không có khóa."""
+    for path in [ROOT / "app.py", *sorted(SRC.glob("*.py"))]:
+        text = path.read_text(encoding="utf-8")
+        assert "REQUEST_DELAY_SECONDS" not in text, f"{path.name} còn dùng delay cố định"
+
+
+def test_the_safety_margin_is_defined_once():
+    """Biên an toàn chỉ được nhân ở đúng một chỗ."""
+    hits = []
+    for path in sorted(SRC.glob("*.py")):
+        if path.stem == "config":
+            continue
+        if "RATE_LIMIT_SAFETY_RATIO" in path.read_text(encoding="utf-8"):
+            hits.append(path.name)
+    assert hits == [], f"Biên an toàn bị nhân bản ở: {hits}"

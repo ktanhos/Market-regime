@@ -49,41 +49,199 @@ from __future__ import annotations
 import os
 import time
 from collections import deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from typing import Iterator
 from datetime import date, timedelta
 from typing import Callable, Sequence
 
 import pandas as pd
 
 from src import config
+from src import credentials as credentials_module
 from src.logging_config import get_logger
 from src.schema import CANONICAL_COLUMNS, DataQualityError, standardize_ohlcv
 
 logger = get_logger(__name__)
 
 
-def has_api_key() -> bool:
-    """Có API key vnstock trong môi trường hay không.
+@dataclass(frozen=True)
+class ApiAccess:
+    """Mức truy cập thực tế của client trong một lượt chạy.
 
-    Không có key vẫn chạy được, chỉ là hạn mức thấp hơn nên pipeline đi chậm hơn.
+    ``verified`` chỉ đúng khi client xác nhận nó đang giữ đúng khóa ta đưa vào.
+    Hạn mức cao chỉ được áp dụng khi ``verified`` là True: không bao giờ nâng
+    lên 60 lượt/phút chỉ vì môi trường có một chuỗi tên VNSTOCK_API_KEY.
     """
-    return bool(os.environ.get(config.VNSTOCK_API_KEY_ENV, "").strip())
+
+    tier: str = "guest"
+    observed_limit: int = config.RATE_LIMIT_FALLBACK_GUEST
+    effective_limit: int = 0
+    configured: bool = False
+    verified: bool = False
+    source: str = credentials_module.SOURCE_NONE
+    note: str = ""
+
+    @property
+    def source_label(self) -> str:
+        return credentials_module.SOURCE_LABELS.get(self.source, self.source)
+
+    def as_dict(self) -> dict:
+        """Chỉ chứa siêu dữ liệu. Không bao giờ chứa giá trị khóa."""
+        return {
+            "tier": self.tier,
+            "observed_limit": self.observed_limit,
+            "effective_limit": self.effective_limit,
+            "configured": self.configured,
+            "verified": self.verified,
+            "source": self.source,
+            "note": self.note,
+        }
 
 
-def register_api_key() -> bool:
-    """Đăng ký API key nếu môi trường có cấu hình. Trả về True nếu đã đăng ký."""
-    key = os.environ.get(config.VNSTOCK_API_KEY_ENV, "").strip()
-    if not key:
-        return False
+def _authenticator():
+    """Đối tượng vnstock dùng để quyết định gói và hạn mức."""
+    from vnai.beam.auth import authenticator
+
+    return authenticator
+
+
+def _observed_limit(force_refresh: bool = True) -> tuple[str, int]:
+    """Hỏi thẳng client: đang ở gói nào và hạn mức bao nhiêu lượt mỗi phút.
+
+    Đây là nguồn sự thật, không phải phỏng đoán từ biến môi trường.
+
+    ``force_refresh`` là bắt buộc sau khi vừa đổi khóa: ``get_tier`` có bộ nhớ
+    đệm theo thời gian, nên nếu không ép làm mới thì nó trả lại gói cũ và hạn
+    mức sẽ không bao giờ được nâng lên dù khóa đã được áp dụng.
+    """
     try:
-        from vnstock import register_user
-
-        register_user(api_key=key)
-        logger.info("Đã đăng ký API key vnstock, hạn mức truy cập cao hơn")
-        return True
+        auth = _authenticator()
+        tier = str(auth.get_tier(force_refresh=force_refresh))
+        limit = int(auth.get_limits(tier).get("min", config.RATE_LIMIT_FALLBACK_GUEST))
+        return tier, limit
     except Exception as exc:
-        logger.warning("Không đăng ký được API key vnstock: %s", str(exc)[:200])
-        return False
+        logger.warning("Không đọc được gói truy cập từ vnstock: %s", str(exc)[:200])
+        return "unknown", config.RATE_LIMIT_FALLBACK_GUEST
+
+
+def describe_api_access(credentials: "credentials_module.ApiCredentials | None" = None) -> ApiAccess:
+    """Mức truy cập sẽ có nếu chạy ngay bây giờ, KHÔNG thay đổi gì.
+
+    Dùng cho phần hiển thị trạng thái ở thanh bên.
+    """
+    credentials = credentials or credentials_module.resolve_vnstock_api_key()
+    if not credentials.configured:
+        tier, limit = _observed_limit(force_refresh=True)
+        return ApiAccess(
+            tier=tier,
+            observed_limit=limit,
+            effective_limit=config.effective_rate_limit(limit),
+            source=credentials.source,
+        )
+    # Chưa áp khóa nên chỉ ước lượng theo gói Cộng đồng.
+    limit = config.RATE_LIMIT_FALLBACK_WITH_KEY
+    return ApiAccess(
+        tier="free",
+        observed_limit=limit,
+        effective_limit=config.effective_rate_limit(limit),
+        configured=True,
+        verified=False,
+        source=credentials.source,
+        note="Hạn mức thực tế được xác nhận khi bắt đầu cập nhật.",
+    )
+
+
+@contextmanager
+def api_access(
+    credentials: "credentials_module.ApiCredentials | None" = None,
+) -> "Iterator[ApiAccess]":
+    """Cấu hình client với khóa trong suốt một lượt chạy rồi trả lại như cũ.
+
+    Vì sao đặt khóa vào ``os.environ`` chứ không gọi ``register_user``:
+    ``vnai.beam.auth.authenticator.get_api_key()`` đọc biến môi trường
+    **trước** tệp khóa, nên đây là đường chính thức để client dùng đúng khóa
+    này. ``register_user`` thì ghi khóa xuống ``~/.vnstock``, tức là để lại
+    khóa của một phiên Streamlit trên đĩa máy chủ — điều không được phép.
+
+    Giá trị cũ được khôi phục khi thoát, nên khóa của một phiên không rò sang
+    phiên khác trong cùng tiến trình Streamlit.
+    """
+    credentials = credentials or credentials_module.resolve_vnstock_api_key()
+
+    if not credentials.configured:
+        tier, limit = _observed_limit(force_refresh=True)
+        yield ApiAccess(
+            tier=tier,
+            observed_limit=limit,
+            effective_limit=config.effective_rate_limit(limit),
+            source=credentials.source,
+        )
+        return
+
+    if not credentials.usable:
+        tier, limit = _observed_limit(force_refresh=True)
+        logger.warning(
+            "API key từ %s quá ngắn nên bị bỏ qua, chạy ở gói Khách",
+            credentials.source_label,
+        )
+        yield ApiAccess(
+            tier=tier,
+            observed_limit=limit,
+            effective_limit=config.effective_rate_limit(limit),
+            configured=True,
+            verified=False,
+            source=credentials.source,
+            note="Khóa quá ngắn nên không được dùng.",
+        )
+        return
+
+    key_name = config.VNSTOCK_API_KEY_ENV
+    previous = os.environ.get(key_name)
+    os.environ[key_name] = credentials.key
+    try:
+        # Xác minh: client có thực sự giữ đúng khóa vừa đưa vào hay không.
+        verified = False
+        try:
+            verified = _authenticator().get_api_key() == credentials.key
+        except Exception as exc:
+            logger.warning("Không xác minh được API key: %s", str(exc)[:200])
+
+        if not verified:
+            tier, limit = _observed_limit(force_refresh=True)
+            logger.warning("Client không nhận API key, giữ hạn mức gói Khách")
+            yield ApiAccess(
+                tier=tier,
+                observed_limit=config.RATE_LIMIT_FALLBACK_GUEST,
+                effective_limit=config.effective_rate_limit(config.RATE_LIMIT_FALLBACK_GUEST),
+                configured=True,
+                verified=False,
+                source=credentials.source,
+                note="Client không nhận khóa nên vẫn dùng hạn mức gói Khách.",
+            )
+            return
+
+        tier, limit = _observed_limit(force_refresh=True)
+        effective = config.effective_rate_limit(limit)
+        logger.info(
+            "API key từ %s đã được áp dụng · gói %s · hạn mức %d, vận hành %d lượt/phút",
+            credentials.source_label, tier, limit, effective,
+        )
+        yield ApiAccess(
+            tier=tier,
+            observed_limit=limit,
+            effective_limit=effective,
+            configured=True,
+            verified=True,
+            source=credentials.source,
+        )
+    finally:
+        if previous is None:
+            os.environ.pop(key_name, None)
+        else:
+            os.environ[key_name] = previous
+        # Bỏ bộ nhớ đệm gói để lần hỏi sau phản ánh đúng trạng thái đã khôi phục.
+        _observed_limit(force_refresh=True)
 
 
 class RateLimiter:
@@ -100,7 +258,7 @@ class RateLimiter:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ):
-        self.max_calls = max_calls or config.requests_per_minute(has_api_key())
+        self.max_calls = max_calls or config.requests_per_minute(False)
         self.window = window
         self._sleep = sleep
         self._clock = clock
@@ -125,6 +283,20 @@ class RateLimiter:
 
         self._calls.append(now)
         return waited
+
+    def downgrade(self, max_calls: int | None = None) -> int:
+        """Hạ hạn mức khi nguồn vẫn từ chối dù ta đã điều tiết.
+
+        Nghĩa là ước lượng gói truy cập đã sai — ví dụ khóa không được nguồn
+        chấp nhận. Không được tiếp tục giả định hạn mức cao.
+        """
+        target = max_calls or config.requests_per_minute(False)
+        if target < self.max_calls:
+            logger.warning(
+                "Hạ hạn mức vận hành từ %d xuống %d lượt/phút", self.max_calls, target
+            )
+            self.max_calls = target
+        return self.max_calls
 
     def cool_down(self, seconds: float | None = None) -> None:
         """Chờ hết một chu kỳ sau khi bị nguồn từ chối."""
@@ -370,6 +542,9 @@ def fetch_history(
                     if rate_limit_retries < config.MAX_RATE_LIMIT_RETRIES:
                         rate_limit_retries += 1
                         if limiter is not None:
+                            # Bị chặn dù đã điều tiết nghĩa là hạn mức ta tưởng
+                            # đang có không đúng. Hạ về mức an toàn rồi mới thử lại.
+                            limiter.downgrade()
                             limiter.cool_down()
                         else:
                             sleep(config.RATE_LIMIT_COOLDOWN_SECONDS)
@@ -399,9 +574,17 @@ def fetch_history(
     )
 
 
-def make_limiter(sleep: Callable[[float], None] = time.sleep) -> RateLimiter:
-    """Bộ điều tiết dùng cho cả một lượt chạy."""
-    return RateLimiter(sleep=sleep)
+def make_limiter(
+    sleep: Callable[[float], None] = time.sleep,
+    access: ApiAccess | None = None,
+) -> RateLimiter:
+    """Bộ điều tiết DUY NHẤT cho cả một lượt chạy.
+
+    Hạn mức lấy từ mức truy cập đã được xác minh, không phải từ sự tồn tại của
+    một biến môi trường.
+    """
+    max_calls = access.effective_limit if access is not None else None
+    return RateLimiter(max_calls=max_calls, sleep=sleep)
 
 
 def fetch_index(symbol: str, start: str, end: str | None = None, **kwargs) -> FetchResult:
@@ -462,7 +645,10 @@ def fetch_index_members(index: str = "VN30", source: str = config.PRIMARY_SOURCE
     return symbols
 
 
-def connectivity_check(sleep: Callable[[float], None] = time.sleep) -> list[ProbeResult]:
+def connectivity_check(
+    sleep: Callable[[float], None] = time.sleep,
+    limiter: "RateLimiter | None" = None,
+) -> list[ProbeResult]:
     """Chẩn đoán API: một chỉ số, một cổ phiếu và danh sách thành phần VN30.
 
     Nếu ba phép thử này không chạy được thì không nên gọi tiếp 30 mã còn lại.
@@ -470,7 +656,9 @@ def connectivity_check(sleep: Callable[[float], None] = time.sleep) -> list[Prob
     start = (date.today() - timedelta(days=30)).isoformat()
     end = date.today().isoformat()
     results: list[ProbeResult] = []
-    limiter = RateLimiter(sleep=sleep)
+    # Dùng lại bộ điều tiết của tầng gọi nếu có, để ba phép thử này nằm chung
+    # một ngân sách với pipeline thay vì tiêu thêm hạn mức riêng.
+    limiter = limiter if limiter is not None else RateLimiter(sleep=sleep)
 
     for symbol, asset_type in (("VNINDEX", ASSET_INDEX), ("FPT", ASSET_STOCK)):
         try:

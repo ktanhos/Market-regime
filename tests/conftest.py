@@ -79,7 +79,6 @@ def temp_store(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "UPDATE_LOG_FILE", processed / "update_log.json")
     monkeypatch.setattr(config, "VN30_SNAPSHOT_FILE", processed / "vn30_snapshot.json")
     monkeypatch.setattr(config, "VNINDEX_FEATURES_FILE", processed / "vnindex_features.parquet")
-    monkeypatch.setattr(config, "REQUEST_DELAY_SECONDS", 0.0)
     storage.ensure_dirs()
     return tmp_path
 

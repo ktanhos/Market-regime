@@ -36,17 +36,18 @@ import pandas as pd
 from src import config, features, storage
 from src import universe as universe_module
 from src.logging_config import get_logger
+from src.credentials import ApiCredentials, resolve_vnstock_api_key
 from src.vnstock_data import (
     ASSET_INDEX,
     ASSET_STOCK,
     RATE_LIMITED,
     FetchError,
+    api_access,
     default_start,
     fetch_history,
     fetch_index_members,
     friendly_message,
     make_limiter,
-    register_api_key,
     vnstock_version,
 )
 
@@ -161,6 +162,9 @@ class UpdateReport:
     sync_files: int = 0
     sync_message: str = ""
 
+    # Siêu dữ liệu về mức truy cập API. KHÔNG BAO GIỜ chứa giá trị khóa.
+    api_access: dict = field(default_factory=dict)
+
     datasets: list[dict] = field(default_factory=list)
     failures: list[dict] = field(default_factory=list)
     universe: dict = field(default_factory=dict)
@@ -219,6 +223,7 @@ class UpdateReport:
             "sync_status": self.sync_status,
             "sync_files": self.sync_files,
             "sync_message": self.sync_message,
+            "api_access": self.api_access,
             "total_count": self.total_count,
             "success_count": self.success_count,
             "failure_count": self.failure_count,
@@ -348,12 +353,42 @@ def run_update(
     universe_fetcher: Callable = fetch_index_members,
     end: str | None = None,
     limiter=None,
+    credentials: ApiCredentials | None = None,
 ) -> UpdateReport:
     """Chạy toàn bộ pipeline cập nhật.
+
+    ``credentials`` do tầng gọi truyền xuống: ``app.py`` gộp khóa từ phiên
+    Streamlit và Streamlit Secrets, script dòng lệnh để None và khóa được lấy
+    từ biến môi trường. Tầng này không biết Streamlit tồn tại.
 
     ``fetcher`` và ``universe_fetcher`` được tách ra để kiểm thử được mà không
     cần mạng.
     """
+    credentials = credentials or resolve_vnstock_api_key()
+    with api_access(credentials) as access:
+        return _run_update_with_access(
+            access=access,
+            refresh_universe=refresh_universe,
+            progress=progress,
+            sleep=sleep,
+            fetcher=fetcher,
+            universe_fetcher=universe_fetcher,
+            end=end,
+            limiter=limiter,
+        )
+
+
+def _run_update_with_access(
+    access,
+    refresh_universe: bool,
+    progress: ProgressCallback | None,
+    sleep: Callable[[float], None],
+    fetcher: Callable,
+    universe_fetcher: Callable,
+    end: str | None,
+    limiter,
+) -> UpdateReport:
+    """Thân pipeline, chạy khi client đã được cấu hình xong khóa (nếu có)."""
     notify = progress or _noop
     report = UpdateReport(
         started_at=storage.utc_now_iso(),
@@ -362,11 +397,15 @@ def run_update(
     )
     storage.ensure_dirs()
     end = end or date.today().isoformat()
-    register_api_key()
-    # Một bộ điều tiết dùng chung cho cả lượt chạy: hạn mức của nguồn tính theo
-    # phút nên không thể chỉ nghỉ giữa hai lượt gọi.
-    limiter = limiter if limiter is not None else make_limiter(sleep)
-    logger.info("Điều tiết ở mức %d lượt/phút", limiter.max_calls)
+    report.api_access = access.as_dict()
+
+    # ĐÚNG MỘT bộ điều tiết cho cả lượt chạy. Hạn mức lấy từ mức truy cập đã
+    # được xác minh, quyết định một lần ở đây và không tính lại giữa chừng.
+    limiter = limiter if limiter is not None else make_limiter(sleep, access=access)
+    logger.info(
+        "Gói %s · hạn mức %d, vận hành %d lượt/phút",
+        access.tier, access.observed_limit, limiter.max_calls,
+    )
 
     legacy = storage.legacy_stock_files()
     if legacy:

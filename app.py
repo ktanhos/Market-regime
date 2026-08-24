@@ -31,6 +31,7 @@ from src import config, features, quality, storage
 from src import dispersion as dispersion_module
 from src import portfolio_risk, regime as regime_module
 from src import universe as universe_module
+from src.credentials import ApiCredentials, resolve_vnstock_api_key
 from src.github_store import sync_files, token_status
 from src.logging_config import get_logger
 from src.updater import (
@@ -44,7 +45,14 @@ from src.updater import (
     record_sync,
     run_update,
 )
-from src.vnstock_data import connectivity_check, expected_schema, vnstock_version
+from src.vnstock_data import (
+    api_access,
+    connectivity_check,
+    describe_api_access,
+    expected_schema,
+    make_limiter,
+    vnstock_version,
+)
 
 logger = get_logger(__name__)
 
@@ -214,6 +222,91 @@ def load_coverage(symbols: tuple[str, ...]) -> dict:
 
 
 # =============================================================================
+# Khóa API
+# =============================================================================
+
+SESSION_KEY_FIELD = "vnstock_api_key"
+
+
+def _secrets_api_key() -> str | None:
+    """Đọc Streamlit Secrets. Chỉ tầng giao diện được phép chạm vào st.secrets."""
+    try:
+        value = st.secrets.get(config.VNSTOCK_API_KEY_ENV, "")
+    except (FileNotFoundError, KeyError, AttributeError):
+        return None
+    return str(value).strip() or None
+
+
+def current_credentials() -> ApiCredentials:
+    """Khóa sẽ được dùng: phiên → Streamlit Secrets → biến môi trường."""
+    return resolve_vnstock_api_key(
+        session_key=st.session_state.get(SESSION_KEY_FIELD),
+        secrets_key=_secrets_api_key(),
+    )
+
+
+def render_api_key_controls(sb, credentials: ApiCredentials) -> None:
+    """Ô nhập khóa. Khóa chỉ nằm trong session_state, không ghi xuống đĩa."""
+    label = (
+        f"Thay đổi khóa API ({credentials.source_label})"
+        if credentials.configured
+        else "Nhập khóa API"
+    )
+    with sb.expander(label, expanded=False):
+        entered = st.text_input(
+            "VNSTOCK API KEY",
+            type="password",
+            key="vnstock_api_key_input",
+            help=(
+                "Khóa chỉ tồn tại trong phiên làm việc này, không được ghi vào tệp, "
+                "vào dữ liệu hay lên GitHub. Đã cấu hình Streamlit Secrets thì không "
+                "cần nhập gì ở đây."
+            ),
+        )
+        columns = st.columns(2)
+        if columns[0].button("Áp dụng", width="stretch"):
+            cleaned = (entered or "").strip()
+            if not cleaned:
+                st.warning("Chưa nhập khóa.")
+            elif len(cleaned) < 10:
+                st.error("Khóa quá ngắn, vnstock sẽ từ chối.")
+            else:
+                st.session_state[SESSION_KEY_FIELD] = cleaned
+                st.rerun()
+        if columns[1].button("Xóa khóa phiên", width="stretch"):
+            st.session_state.pop(SESSION_KEY_FIELD, None)
+            st.rerun()
+
+        if st.session_state.get(SESSION_KEY_FIELD):
+            st.caption(f"Đang dùng khóa nhập trong phiên: {credentials.masked}")
+        st.caption(
+            "Không có khóa vẫn chạy được, chỉ chậm hơn vì hạn mức truy cập thấp hơn."
+        )
+
+
+def render_api_access(sb, credentials: ApiCredentials) -> None:
+    """Khu vực KẾT NỐI DỮ LIỆU: trạng thái khóa và hạn mức."""
+    access = describe_api_access(credentials)
+    if credentials.configured:
+        status_text, status_tone = "API key đã được cấu hình", GOOD
+        quota = f"{access.observed_limit} lượt/phút"
+    else:
+        status_text, status_tone = "Chưa cấu hình API key", WARN
+        quota = f"Gói khách · {access.observed_limit} lượt/phút"
+
+    sb.markdown(
+        "<div class='label' style='margin-top:.5rem'>KẾT NỐI DỮ LIỆU</div>"
+        + row("Nguồn dữ liệu", f"VNStock {vnstock_version()}")
+        + row("API access", status_text, status_tone)
+        + row("Hạn mức API", quota)
+        + row("Giới hạn vận hành", f"{access.effective_limit} lượt/phút")
+        + (row("Nguồn khóa", credentials.source_label) if credentials.configured else ""),
+        unsafe_allow_html=True,
+    )
+    render_api_key_controls(sb, credentials)
+
+
+# =============================================================================
 # Thanh bên
 # =============================================================================
 
@@ -244,15 +337,19 @@ def render_sidebar() -> None:
         )
 
     sb.divider()
+    credentials = current_credentials()
+    render_api_access(sb, credentials)
+
+    sb.divider()
     token = token_status()
     if not token["configured"]:
         sb.info(token["hint"])
 
     if sb.button("Kiểm tra API", width="stretch"):
-        render_api_check(sb)
+        render_api_check(sb, credentials)
 
     if sb.button("Cập nhật dữ liệu", type="primary", width="stretch"):
-        run_update_flow(sb)
+        run_update_flow(sb, credentials)
 
     sb.caption(
         "Mở dashboard không gọi API. Dữ liệu chỉ được lấy khi bấm nút cập nhật. "
@@ -260,10 +357,16 @@ def render_sidebar() -> None:
     )
 
 
-def render_api_check(sb) -> None:
+def render_api_check(sb, credentials: ApiCredentials | None = None) -> None:
     """Chẩn đoán API: VNINDEX, FPT và danh sách VN30, không cần chạy 30 mã."""
+    credentials = credentials or current_credentials()
     with sb.status("Đang kiểm tra API...", expanded=True) as status:
-        probes = connectivity_check()
+        with api_access(credentials) as access:
+            st.caption(
+                f"Gói {access.tier} · hạn mức {access.observed_limit}, "
+                f"vận hành {access.effective_limit} lượt/phút"
+            )
+            probes = connectivity_check(limiter=make_limiter(access=access))
         for probe in probes:
             mark = "✅" if probe.ok else "❌"
             st.write(f"{mark} **{probe.name}** — {'SUCCESS' if probe.ok else 'FAILED'}")
@@ -286,8 +389,9 @@ def render_api_check(sb) -> None:
     sb.caption("Schema kỳ vọng: " + ", ".join(expected_schema()))
 
 
-def run_update_flow(sb) -> None:
+def run_update_flow(sb, credentials: ApiCredentials | None = None) -> None:
     """Chạy pipeline cập nhật với thanh tiến trình theo từng giai đoạn."""
+    credentials = credentials or current_credentials()
     bars = {phase: sb.progress(0.0, text=PHASE_LABELS[phase]) for phase in PHASE_ORDER}
     line = sb.empty()
 
@@ -297,13 +401,18 @@ def run_update_flow(sb) -> None:
             bars[phase].progress(min(1.0, max(0.0, float(ratio))), text=PHASE_LABELS[phase])
 
     try:
-        report = run_update(progress=progress)
+        report = run_update(progress=progress, credentials=credentials)
     except Exception as exc:  # dashboard không được phép sập vì lỗi cập nhật
         logger.exception("Cập nhật thất bại")
         line.empty()
         sb.error(f"Không hoàn tất cập nhật: {type(exc).__name__}: {exc}")
         return
 
+    access = report.api_access or {}
+    if access.get("effective_limit"):
+        line.caption(
+            f"Gói {access.get('tier', '-')} · vận hành {access['effective_limit']} lượt/phút"
+        )
     if report.first_run:
         sb.info("Đây là lần khởi tạo dữ liệu VN30 đầu tiên.")
     if report.rate_limited:
@@ -332,7 +441,10 @@ def run_update_flow(sb) -> None:
 
     render_update_result(sb, report)
 
-    st.cache_data.clear()
+    # Chỉ xóa cache dữ liệu để dashboard đọc Parquet mới. Không đụng tới
+    # session_state, nếu không người dùng mất khóa vừa nhập trong cùng phiên.
+    load_market_state.clear()
+    load_coverage.clear()
     if report.success_count:
         st.rerun()
 

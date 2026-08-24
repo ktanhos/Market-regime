@@ -146,3 +146,54 @@ def test_first_run_shows_an_invitation_not_a_wall_of_errors(no_network, temp_sto
     assert "Cập nhật dữ liệu" in invitations
     # Bảng chi tiết 30 dòng "Không có tệp" không được bung ra ngay ở lần đầu.
     assert not any("Chi tiết từng tệp dữ liệu" in str(e.label) for e in app.expander)
+
+
+def test_sidebar_shows_api_access_without_a_key(no_network, temp_store, monkeypatch):
+    from src import config, features, storage, universe as universe_module
+    from src.schema import standardize_ohlcv
+    from tests.conftest import synthetic_ohlcv
+
+    monkeypatch.delenv(config.VNSTOCK_API_KEY_ENV, raising=False)
+    universe_module.save_universe([f"S{i:02d}" for i in range(30)], source="kiểm thử")
+    storage.write_frame(
+        standardize_ohlcv(synthetic_ohlcv(400, seed=1)), storage.index_path(config.VNINDEX_DATASET)
+    )
+    features.rebuild(universe_module.symbols())
+
+    app = AppTest.from_file(APP, default_timeout=180)
+    app.run()
+    assert not app.exception, [str(e) for e in app.exception]
+
+    sidebar = " ".join(m.value for m in app.sidebar.markdown)
+    assert "KẾT NỐI DỮ LIỆU" in sidebar
+    assert "Chưa cấu hình API key" in sidebar
+    assert "Giới hạn vận hành" in sidebar
+
+
+def test_a_session_key_is_used_and_never_rendered(no_network, temp_store, monkeypatch):
+    """Khóa nhập trong phiên phải được ưu tiên nhưng không bao giờ hiện ra trang."""
+    from src import config, features, storage, universe as universe_module
+    from src.schema import standardize_ohlcv
+    from tests.conftest import synthetic_ohlcv
+
+    secret = "SESSION-KEY-0123456789"
+    monkeypatch.setenv(config.VNSTOCK_API_KEY_ENV, "ENV-KEY-0123456789")
+    universe_module.save_universe([f"S{i:02d}" for i in range(30)], source="kiểm thử")
+    storage.write_frame(
+        standardize_ohlcv(synthetic_ohlcv(400, seed=1)), storage.index_path(config.VNINDEX_DATASET)
+    )
+    features.rebuild(universe_module.symbols())
+
+    app = AppTest.from_file(APP, default_timeout=180)
+    app.session_state["vnstock_api_key"] = secret
+    app.run()
+    assert not app.exception, [str(e) for e in app.exception]
+
+    rendered = " ".join(
+        [m.value for m in app.markdown]
+        + [m.value for m in app.sidebar.markdown]
+        + [c.value for c in app.caption]
+    )
+    assert secret not in rendered
+    assert "API key đã được cấu hình" in rendered
+    assert "khóa nhập trong phiên" in rendered      # nguồn khóa, không phải giá trị

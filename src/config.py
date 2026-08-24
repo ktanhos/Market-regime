@@ -40,19 +40,25 @@ INDEX_SOURCES = {
 }
 
 # --- Tần suất gọi API --------------------------------------------------------
-# Nguồn dữ liệu giới hạn số lượt gọi theo phút. Gói Khách (không API key) chỉ
-# cho 20 lượt/phút; API key miễn phí nâng lên 60. Đây là con số quan sát được
-# từ chính thông báo của vnstock khi bị chặn, không phải phỏng đoán.
+# Nguồn dữ liệu giới hạn số lượt gọi theo phút, khác nhau theo gói. Hạn mức
+# thật do chính vnstock công bố (``vnai.beam.auth.authenticator.TIER_LIMITS``):
 #
-# Đặt thấp hơn hạn mức thật để chừa chỗ cho các lượt gọi ngoài pipeline
+#     guest 20/phút · free 60/phút · các gói tài trợ 180-600/phút
+#
+# Ở thời điểm chạy, ``src.vnstock_data`` hỏi thẳng client xem nó đang ở gói nào
+# rồi lấy hạn mức từ đó, nên không thể xảy ra chuyện tự nhận 60 trong khi client
+# vẫn ở gói Khách. Hai con số dưới đây chỉ là mức dự phòng khi không hỏi được.
+RATE_LIMIT_FALLBACK_GUEST = 20
+RATE_LIMIT_FALLBACK_WITH_KEY = 60
+
+# Chạy dưới hạn mức thật để chừa chỗ cho các lượt gọi ngoài pipeline
 # (ví dụ scripts/check_api.py chạy ngay trước đó trong cùng một phút).
-REQUESTS_PER_MINUTE_GUEST = 15
-REQUESTS_PER_MINUTE_WITH_KEY = 45
+RATE_LIMIT_SAFETY_RATIO = 0.75
+RATE_LIMIT_MIN_EFFECTIVE = 5
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 # Khi vẫn bị chặn dù đã điều tiết: chờ rồi thử lại, không bỏ cuộc ngay.
 RATE_LIMIT_COOLDOWN_SECONDS = 60.0
 MAX_RATE_LIMIT_RETRIES = 2
-REQUEST_DELAY_SECONDS = RATE_LIMIT_WINDOW_SECONDS / REQUESTS_PER_MINUTE_GUEST
 
 MAX_ATTEMPTS_PER_SOURCE = 2   # vnstock đã tự retry 3 lần bên trong mỗi lần gọi
 BACKOFF_BASE_SECONDS = 2.0
@@ -62,12 +68,23 @@ BACKOFF_MAX_SECONDS = 16.0
 VNSTOCK_API_KEY_ENV = "VNSTOCK_API_KEY"
 
 
+def effective_rate_limit(observed_limit: int | None) -> int:
+    """Hạn mức vận hành, thấp hơn hạn mức thật một biên an toàn.
+
+    Đây là chỗ DUY NHẤT áp biên an toàn. Không nhân bản phép nhân này ở nơi khác.
+    """
+    limit = int(observed_limit or RATE_LIMIT_FALLBACK_GUEST)
+    return max(RATE_LIMIT_MIN_EFFECTIVE, int(limit * RATE_LIMIT_SAFETY_RATIO))
+
+
 def requests_per_minute(has_api_key: bool = False) -> int:
-    return REQUESTS_PER_MINUTE_WITH_KEY if has_api_key else REQUESTS_PER_MINUTE_GUEST
+    """Hạn mức vận hành dự phòng khi chưa hỏi được client đang ở gói nào."""
+    fallback = RATE_LIMIT_FALLBACK_WITH_KEY if has_api_key else RATE_LIMIT_FALLBACK_GUEST
+    return effective_rate_limit(fallback)
 
 
 def request_spacing_seconds(has_api_key: bool = False) -> float:
-    """Khoảng cách tối thiểu giữa hai lượt gọi để không vượt hạn mức."""
+    """Khoảng cách trung bình giữa hai lượt gọi ở hạn mức vận hành."""
     return RATE_LIMIT_WINDOW_SECONDS / requests_per_minute(has_api_key)
 
 # --- Độ dài lịch sử cần lấy --------------------------------------------------
