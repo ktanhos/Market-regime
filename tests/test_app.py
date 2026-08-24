@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from streamlit.proto.TextInput_pb2 import TextInput as TextInputProto
 from streamlit.testing.v1 import AppTest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,7 +51,7 @@ def test_update_button_exists_and_is_not_triggered_on_open(no_network):
     app.run()
     labels = [b.label for b in app.sidebar.button]
     assert "Cập nhật dữ liệu" in labels
-    assert "Kiểm tra API" in labels
+    assert "Kiểm tra kết nối API" in labels
 
 
 def test_no_deprecated_streamlit_width_argument():
@@ -165,9 +166,19 @@ def test_sidebar_shows_api_access_without_a_key(no_network, temp_store, monkeypa
     assert not app.exception, [str(e) for e in app.exception]
 
     sidebar = " ".join(m.value for m in app.sidebar.markdown)
-    assert "KẾT NỐI DỮ LIỆU" in sidebar
-    assert "Chưa cấu hình API key" in sidebar
+    assert "KẾT NỐI VNSTOCK" in sidebar
+    assert "API key chưa được cấu hình" in sidebar
     assert "Giới hạn vận hành" in sidebar
+
+    # Ô nhập phải hiện thẳng ở thanh bên, không nằm trong expander đóng sẵn.
+    fields = [t.label for t in app.sidebar.text_input]
+    assert "VNSTOCK API KEY" in fields
+    # type="password" nằm trong proto, không phải thuộc tính .type của AppTest.
+    field = app.sidebar.text_input(key="vnstock_api_key_input")
+    assert field.proto.type == TextInputProto.Type.PASSWORD
+    assert field.placeholder
+    buttons = [b.label for b in app.sidebar.button]
+    assert "Áp dụng API key" in buttons
 
 
 def test_a_session_key_is_used_and_never_rendered(no_network, temp_store, monkeypatch):
@@ -197,3 +208,59 @@ def test_a_session_key_is_used_and_never_rendered(no_network, temp_store, monkey
     assert secret not in rendered
     assert "API key đã được cấu hình" in rendered
     assert "khóa nhập trong phiên" in rendered      # nguồn khóa, không phải giá trị
+    assert "Xóa API key phiên này" in [b.label for b in app.sidebar.button]
+
+
+def test_the_api_key_field_is_not_hidden_behind_an_expander(no_network, temp_store, monkeypatch):
+    """Ô nhập phải nhìn thấy ngay, và nằm phía trên hai nút hành động."""
+    from src import config, features, storage, universe as universe_module
+    from src.schema import standardize_ohlcv
+    from tests.conftest import synthetic_ohlcv
+
+    monkeypatch.delenv(config.VNSTOCK_API_KEY_ENV, raising=False)
+    universe_module.save_universe([f"S{i:02d}" for i in range(30)], source="kiểm thử")
+    storage.write_frame(
+        standardize_ohlcv(synthetic_ohlcv(400, seed=1)), storage.index_path(config.VNINDEX_DATASET)
+    )
+    features.rebuild(universe_module.symbols())
+
+    app = AppTest.from_file(APP, default_timeout=180)
+    app.run()
+    assert not app.exception, [str(e) for e in app.exception]
+
+    # Không có expander nào chứa ô nhập khóa.
+    expander_labels = [str(e.label) for e in app.expander]
+    assert not any("API" in label for label in expander_labels), expander_labels
+
+    # Ô nhập tồn tại thật ở thanh bên và đứng trước hai nút hành động.
+    labels = [b.label for b in app.sidebar.button]
+    assert [t.label for t in app.sidebar.text_input] == ["VNSTOCK API KEY"]
+    assert labels.index("Áp dụng API key") < labels.index("Kiểm tra kết nối API")
+    assert labels.index("Áp dụng API key") < labels.index("Cập nhật dữ liệu")
+
+
+def test_applying_a_key_through_the_widget_configures_the_run(no_network, temp_store, monkeypatch):
+    """Bấm Áp dụng phải thật sự đưa khóa vào session và đổi trạng thái hiển thị."""
+    from src import config, features, storage, universe as universe_module
+    from src.schema import standardize_ohlcv
+    from tests.conftest import synthetic_ohlcv
+
+    monkeypatch.delenv(config.VNSTOCK_API_KEY_ENV, raising=False)
+    universe_module.save_universe([f"S{i:02d}" for i in range(30)], source="kiểm thử")
+    storage.write_frame(
+        standardize_ohlcv(synthetic_ohlcv(400, seed=1)), storage.index_path(config.VNINDEX_DATASET)
+    )
+    features.rebuild(universe_module.symbols())
+
+    app = AppTest.from_file(APP, default_timeout=180)
+    app.run()
+    assert "API key chưa được cấu hình" in " ".join(m.value for m in app.sidebar.markdown)
+
+    secret = "TYPED-KEY-0123456789"
+    app.sidebar.text_input(key="vnstock_api_key_input").set_value(secret).run()
+    next(b for b in app.sidebar.button if b.label == "Áp dụng API key").click().run()
+
+    assert app.session_state["vnstock_api_key"] == secret
+    sidebar = " ".join(m.value for m in app.sidebar.markdown)
+    assert "API key đã được cấu hình" in sidebar
+    assert secret not in sidebar

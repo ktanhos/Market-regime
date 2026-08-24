@@ -31,7 +31,7 @@ from src import config, features, quality, storage
 from src import dispersion as dispersion_module
 from src import portfolio_risk, regime as regime_module
 from src import universe as universe_module
-from src.credentials import ApiCredentials, resolve_vnstock_api_key
+from src.credentials import MIN_KEY_LENGTH, ApiCredentials, resolve_vnstock_api_key
 from src.github_store import sync_files, token_status
 from src.logging_config import get_logger
 from src.updater import (
@@ -145,12 +145,15 @@ _HEX = {
 }
 
 
+# --- Trình bày ---------------------------------------------------------------
+
 def tone(state: object) -> str:
     """Màu theo ý nghĩa, không bao giờ theo trang trí."""
     return _TONE.get(str(state).strip(), NONE)
 
 
 def fmt(value: object, digits: int = 1, suffix: str = "") -> str:
+    """Số liệu thiếu hiện dấu gạch ngang thay vì nan."""
     if value is None:
         return "—"
     try:
@@ -196,8 +199,11 @@ def bar(pct: object, label: str, suffix: str = "") -> str:
     )
 
 
+# --- Tải trạng thái (chỉ đọc đĩa) --------------------------------------------
+
 @st.cache_data(show_spinner=False)
 def load_market_state() -> dict:
+    """Gọi lần lượt ba tầng: Feature → Market Regime → Portfolio Risk."""
     snapshot = features.build_snapshot()
     if not snapshot.get("ready"):
         return snapshot
@@ -215,10 +221,15 @@ def load_coverage(symbols: tuple[str, ...]) -> dict:
     return quality.coverage_summary(list(symbols))
 
 
+# =============================================================================
+# Khóa API
+# =============================================================================
+
 SESSION_KEY_FIELD = "vnstock_api_key"
 
 
 def _secrets_api_key() -> str | None:
+    """Đọc Streamlit Secrets. Chỉ tầng giao diện được phép chạm vào st.secrets."""
     try:
         value = st.secrets.get(config.VNSTOCK_API_KEY_ENV, "")
     except (FileNotFoundError, KeyError, AttributeError):
@@ -227,73 +238,75 @@ def _secrets_api_key() -> str | None:
 
 
 def current_credentials() -> ApiCredentials:
+    """Khóa sẽ được dùng: phiên → Streamlit Secrets → biến môi trường."""
     return resolve_vnstock_api_key(
         session_key=st.session_state.get(SESSION_KEY_FIELD),
         secrets_key=_secrets_api_key(),
     )
 
 
-def render_api_key_controls(sb, credentials: ApiCredentials) -> None:
-    label = (
-        f"Thay đổi khóa API ({credentials.source_label})"
-        if credentials.configured
-        else "Nhập khóa API"
-    )
-    with sb.expander(label, expanded=False):
-        entered = st.text_input(
-            "VNSTOCK API KEY",
-            type="password",
-            key="vnstock_api_key_input",
-            placeholder="Dán API key tại đây",
-            help=(
-                "Khóa nhập tại đây chỉ tồn tại trong phiên làm việc này. "
-                "Không được ghi vào tệp, dữ liệu hay GitHub. Nếu đã cấu hình "
-                "Streamlit Secrets thì không cần nhập lại."
-            ),
-        )
-        columns = st.columns(2)
-        if columns[0].button("Áp dụng", type="primary", width="stretch"):
-            cleaned = (entered or "").strip()
-            if not cleaned:
-                st.warning("Chưa nhập khóa.")
-            elif len(cleaned) < 10:
-                st.error("Khóa quá ngắn, vnstock có thể từ chối.")
-            else:
-                st.session_state[SESSION_KEY_FIELD] = cleaned
-                st.session_state.pop("vnstock_api_key_input", None)
-                st.rerun()
-        if columns[1].button("Xóa khóa phiên", width="stretch"):
-            st.session_state.pop(SESSION_KEY_FIELD, None)
-            st.session_state.pop("vnstock_api_key_input", None)
-            st.rerun()
+def render_vnstock_connection(sb, credentials: ApiCredentials) -> None:
+    """Khối KẾT NỐI VNSTOCK, hiển thị thẳng trong thanh bên.
 
-        active = current_credentials()
-        if active.configured:
-            st.success(f"API key đã được cấu hình · {active.source_label}")
-        else:
-            st.caption("Chưa có khóa. Ứng dụng vẫn chạy với hạn mức gói khách.")
+    Ô nhập nằm trực tiếp ở thanh bên chứ không nằm trong expander: người dùng
+    phải thấy ngay là có chỗ nhập khóa mà không cần bấm mở gì cả.
 
-
-def render_api_access(sb, credentials: ApiCredentials) -> None:
+    Khóa nhập ở đây chỉ nằm trong ``st.session_state``. Nó không được ghi vào
+    tệp, vào dữ liệu, vào nhật ký hay lên GitHub, và không bao giờ được hiển
+    thị lại.
+    """
     access = describe_api_access(credentials)
+
     if credentials.configured:
         status_text, status_tone = "API key đã được cấu hình", GOOD
-        quota = f"{access.observed_limit} lượt/phút"
+        quota_text = "Tự động xác định theo gói API"
     else:
-        status_text, status_tone = "Chưa cấu hình API key", WARN
-        quota = f"Gói khách · {access.observed_limit} lượt/phút"
+        status_text, status_tone = "API key chưa được cấu hình", WARN
+        quota_text = f"Gói khách · {access.observed_limit} lượt/phút"
 
     sb.markdown(
-        "<div class='label' style='margin-top:.5rem'>KẾT NỐI DỮ LIỆU</div>"
-        + row("Nguồn dữ liệu", f"VNStock {vnstock_version()}")
-        + row("API access", status_text, status_tone)
-        + row("Hạn mức API", quota)
+        "<div class='label' style='margin-top:.35rem'>KẾT NỐI VNSTOCK</div>"
+        + row("Trạng thái", status_text, status_tone)
+        + row("Hạn mức API", quota_text)
         + row("Giới hạn vận hành", f"{access.effective_limit} lượt/phút")
         + (row("Nguồn khóa", credentials.source_label) if credentials.configured else ""),
         unsafe_allow_html=True,
     )
-    render_api_key_controls(sb, credentials)
 
+    entered = sb.text_input(
+        "VNSTOCK API KEY",
+        type="password",
+        key="vnstock_api_key_input",
+        placeholder="Dán API key tại đây",
+        help=(
+            "Khóa nhập tại đây chỉ tồn tại trong phiên làm việc này. Không được ghi "
+            "vào tệp, dữ liệu hay GitHub. Nếu đã cấu hình Streamlit Secrets thì không "
+            "cần nhập lại."
+        ),
+    )
+
+    if sb.button("Áp dụng API key", width="stretch"):
+        cleaned = (entered or "").strip()
+        if not cleaned:
+            sb.warning("Chưa nhập khóa.")
+        elif len(cleaned) < MIN_KEY_LENGTH:
+            sb.error(f"Khóa quá ngắn, cần tối thiểu {MIN_KEY_LENGTH} ký tự.")
+        else:
+            st.session_state[SESSION_KEY_FIELD] = cleaned
+            st.rerun()
+
+    if st.session_state.get(SESSION_KEY_FIELD):
+        if sb.button("Xóa API key phiên này", width="stretch"):
+            st.session_state.pop(SESSION_KEY_FIELD, None)
+            st.rerun()
+        sb.caption(f"Đang dùng khóa nhập trong phiên: {credentials.masked}")
+    elif not credentials.configured:
+        sb.caption("Không có khóa vẫn chạy được, chỉ chậm hơn vì hạn mức thấp hơn.")
+
+
+# =============================================================================
+# Thanh bên
+# =============================================================================
 
 def render_sidebar() -> None:
     sb = st.sidebar
@@ -323,14 +336,14 @@ def render_sidebar() -> None:
 
     sb.divider()
     credentials = current_credentials()
-    render_api_access(sb, credentials)
+    render_vnstock_connection(sb, credentials)
 
     sb.divider()
     token = token_status()
     if not token["configured"]:
         sb.info(token["hint"])
 
-    if sb.button("Kiểm tra API", width="stretch"):
+    if sb.button("Kiểm tra kết nối API", width="stretch"):
         render_api_check(sb, credentials)
 
     if sb.button("Cập nhật dữ liệu", type="primary", width="stretch"):
@@ -338,11 +351,12 @@ def render_sidebar() -> None:
 
     sb.caption(
         "Mở dashboard không gọi API. Dữ liệu chỉ được lấy khi bấm nút cập nhật. "
-        "Các mã được gọi tuần tự, có giới hạn tốc độ tự động."
+        "Các mã được gọi tuần tự, có nghỉ giữa các lượt."
     )
 
 
 def render_api_check(sb, credentials: ApiCredentials | None = None) -> None:
+    """Chẩn đoán API: VNINDEX, FPT và danh sách VN30, không cần chạy 30 mã."""
     credentials = credentials or current_credentials()
     with sb.status("Đang kiểm tra API...", expanded=True) as status:
         with api_access(credentials) as access:
@@ -374,6 +388,7 @@ def render_api_check(sb, credentials: ApiCredentials | None = None) -> None:
 
 
 def run_update_flow(sb, credentials: ApiCredentials | None = None) -> None:
+    """Chạy pipeline cập nhật với thanh tiến trình theo từng giai đoạn."""
     credentials = credentials or current_credentials()
     bars = {phase: sb.progress(0.0, text=PHASE_LABELS[phase]) for phase in PHASE_ORDER}
     line = sb.empty()
@@ -385,7 +400,7 @@ def run_update_flow(sb, credentials: ApiCredentials | None = None) -> None:
 
     try:
         report = run_update(progress=progress, credentials=credentials)
-    except Exception as exc:
+    except Exception as exc:  # dashboard không được phép sập vì lỗi cập nhật
         logger.exception("Cập nhật thất bại")
         line.empty()
         sb.error(f"Không hoàn tất cập nhật: {type(exc).__name__}: {exc}")
@@ -401,6 +416,7 @@ def run_update_flow(sb, credentials: ApiCredentials | None = None) -> None:
     if report.rate_limited:
         sb.warning(report.aborted_reason)
 
+    # --- Đồng bộ GitHub: chỉ đẩy tệp thực sự tồn tại -------------------------
     line.caption(f"{PHASE_LABELS[PHASE_SYNC]} · Đang đồng bộ")
     files = storage.data_files()
     try:
@@ -423,6 +439,8 @@ def run_update_flow(sb, credentials: ApiCredentials | None = None) -> None:
 
     render_update_result(sb, report)
 
+    # Chỉ xóa cache dữ liệu để dashboard đọc Parquet mới. Không đụng tới
+    # session_state, nếu không người dùng mất khóa vừa nhập trong cùng phiên.
     load_market_state.clear()
     load_coverage.clear()
     if report.success_count:
@@ -430,6 +448,7 @@ def run_update_flow(sb, credentials: ApiCredentials | None = None) -> None:
 
 
 def render_update_result(sb, report) -> None:
+    """Kết quả cập nhật: tách riêng chỉ số và cổ phiếu, nêu rõ trạng thái đồng bộ."""
     latest = storage.last_stored_date(storage.index_path(config.VNINDEX_DATASET))
 
     if report.completed:
@@ -470,9 +489,14 @@ def render_update_result(sb, report) -> None:
     if report.stock_missing:
         sb.warning(f"{len(report.stock_missing)} mã chưa có tệp: " + ", ".join(report.stock_missing))
     if report.failures:
-        with sb.expander(f"{report.failure_count} nguồn chưa cập nhật được", expanded=not report.success_count):
+        with sb.expander(f"{report.failure_count} nguồn chưa cập nhật được",
+                         expanded=not report.success_count):
             st.dataframe(quality.failure_table(report.as_dict()), width="stretch", hide_index=True)
 
+
+# =============================================================================
+# Trang chính
+# =============================================================================
 
 def render_hero(state: dict) -> None:
     regime = state["regime"]
@@ -490,3 +514,433 @@ def render_hero(state: dict) -> None:
         "</div></div>",
         unsafe_allow_html=True,
     )
+
+
+def render_regime(state: dict) -> None:
+    regime = state["regime"]
+    portfolio = state["portfolio"]
+    notes = "".join(f"<li>{note}</li>" for note in regime["risk_reasons"])
+    st.markdown(
+        "<div class='regime'>"
+        "<div class='kicker'>Market Regime</div>"
+        f"<div class='name {tone(regime['regime'])}'>{regime['regime']}</div>"
+        f"<div class='body'>{regime['description']}</div>"
+        f"<div style='margin-top:1rem'><span class='pill {tone(regime['risk_level'])}'>"
+        f"Mức độ rủi ro: {regime['risk_level']}</span></div>"
+        + (f"<ul class='foot'>{notes}</ul>" if notes else "")
+        + f"<div class='body' style='margin-top:1rem'><strong>Quản trị danh mục:</strong> "
+        f"{portfolio['risk_budget']}</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_cards(state: dict) -> None:
+    trend, stress, breadth = state["trend"], state["stress"], state["breadth"]
+    dispersion, concentration = state["dispersion"], state["concentration"]
+
+    c1, c2, c3 = st.columns(3)
+    c1.markdown(
+        card(
+            "Xu hướng",
+            trend["state"],
+            "RORO đo chênh lệch giữa sức mạnh động lượng đa khung và trung bình 49 phiên của chính nó.",
+            extra=row("RORO", fmt(trend.get("roro"), 2))
+            + row("Vùng trung tính", "±" + fmt(trend.get("band"), 2))
+            + row("Strength", fmt(trend.get("strength"), 2, "%")),
+        ),
+        unsafe_allow_html=True,
+    )
+    c2.markdown(
+        card(
+            "Mức biến động",
+            stress["state"],
+            "Market Stress đo bằng biến động Parkinson của VNINDEX so với chính nó. Đây là proxy, không phải VIX.",
+            extra=row("Parkinson 22 phiên", fmt(stress.get("parkinson_vol"), 1, "%"))
+            + row("Phân vị 252 phiên", fmt(stress.get("percentile"), 0) + "/100")
+            + row("Z-score", fmt(stress.get("zscore"), 2)),
+        ),
+        unsafe_allow_html=True,
+    )
+    components = breadth.get("components", {})
+    total = breadth["universe_size"]
+    c3.markdown(
+        card(
+            "Sức khỏe VN30",
+            breadth["state"],
+            f"Breadth score {fmt(breadth.get('score'), 1)}/100 · "
+            f"{breadth.get('valid_symbols', 0)}/{total} mã hợp lệ.",
+            extra="".join(
+                row(f"Trên MA{w}", fmt(components.get(f'ma{w}', {}).get('pct'), 0, "%"))
+                for w in config.BREADTH_MA_WINDOWS
+            ),
+        ),
+        unsafe_allow_html=True,
+    )
+
+    c4, c5 = st.columns(2)
+    windows = dispersion.get("windows", {})
+    c4.markdown(
+        card(
+            "Phân hóa",
+            dispersion["state"],
+            dispersion.get("historical_basis", ""),
+            extra=row("Dispersion 20 phiên", fmt(dispersion.get("value"), 2, "%"))
+            + row("Dispersion 5 phiên", fmt(windows.get(5, {}).get("value"), 2, "%"))
+            + row("Dispersion 1 phiên", fmt(windows.get(1, {}).get("value"), 2, "%"))
+            + row("Phân vị", fmt(dispersion.get("percentile"), 0) + "/100"),
+        ),
+        unsafe_allow_html=True,
+    )
+    top = concentration.get("top_shares", {})
+    c5.markdown(
+        card(
+            "Tập trung rủi ro",
+            concentration["state"],
+            concentration.get("proxy_note", ""),
+            extra=row("Top 5 chiếm", fmt(top.get(5), 1, "%"))
+            + row("Top 10 chiếm", fmt(top.get(10), 1, "%"))
+            + row(
+                "Số mã đóng góp hiệu dụng",
+                f"{fmt(concentration.get('effective_names'), 1)}/{concentration.get('contributors', 0)}",
+            )
+            + row("Herfindahl", fmt(concentration.get("hhi"), 4)),
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_vn30(state: dict) -> None:
+    breadth, concentration = state["breadth"], state["concentration"]
+    st.subheader("Nhóm VN30 hiện tại")
+
+    data_state = breadth.get("data_state", breadth_module.DATA_NONE)
+    total = breadth["universe_size"]
+
+    if data_state == breadth_module.DATA_NONE:
+        st.info(
+            "**Dữ liệu VN30 chưa được khởi tạo.**\n\n"
+            "Ứng dụng đã có dữ liệu VNINDEX nhưng chưa có dữ liệu giá của các cổ phiếu VN30. "
+            "Bấm **Cập nhật dữ liệu** trong thanh bên để tải dữ liệu lần đầu."
+        )
+        return
+
+    if data_state == breadth_module.DATA_INSUFFICIENT:
+        st.warning(
+            f"Đang có {breadth.get('loaded_symbols', 0)}/{total} mã, trong đó "
+            f"{breadth.get('min_valid_symbols', 0)} mã đủ lịch sử cho MA200. "
+            "Bấm Cập nhật dữ liệu để tải nốt phần còn thiếu."
+        )
+        if breadth["missing_symbols"]:
+            st.caption("Mã chưa có tệp: " + ", ".join(breadth["missing_symbols"]))
+        return
+
+    if data_state == breadth_module.DATA_STALE:
+        st.warning(
+            f"Ngày dữ liệu giữa các mã chênh nhau tới {breadth.get('max_gap_sessions', 0)} phiên. "
+            "Số liệu dưới đây có thể không phản ánh cùng một thời điểm: "
+            + ", ".join(breadth.get("stale_symbols", []))
+        )
+
+    rows = ""
+    for window in config.BREADTH_MA_WINDOWS:
+        item = breadth["components"].get(f"ma{window}", {})
+        rows += bar(item.get("pct"), f"Trên MA{window}", f"({item.get('valid', 0)}/{total} mã)")
+    for window in config.BREADTH_RETURN_WINDOWS:
+        item = breadth["components"].get(f"ret{window}", {})
+        label = "Tăng trong phiên" if window == 1 else f"Tăng trong {window} phiên"
+        rows += bar(item.get("pct"), label, f"({item.get('valid', 0)}/{total} mã)")
+
+    left, right = st.columns([1.05, 1])
+    left.markdown(
+        f"<div class='card'><div class='label'>Độ lan tỏa</div>"
+        f"<div class='value {tone(breadth['state'])}'>{breadth['state']} · "
+        f"{fmt(breadth['score'], 0)}/100</div>{rows}</div>",
+        unsafe_allow_html=True,
+    )
+    right.plotly_chart(_concentration_chart(concentration), width="stretch")
+
+    with st.expander("Chi tiết từng mã VN30"):
+        st.dataframe(breadth["table"], width="stretch", hide_index=True)
+        st.dataframe(concentration["table"], width="stretch", hide_index=True)
+
+
+# --- Biểu đồ -----------------------------------------------------------------
+
+def _base_layout(figure: go.Figure, title: str, percent: bool = False) -> go.Figure:
+    figure.update_layout(
+        height=260,
+        margin=dict(l=8, r=8, t=30, b=8),
+        title=dict(text=title, font=dict(size=13, color="#475467")),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        showlegend=False,
+        hovermode="x unified",
+    )
+    figure.update_xaxes(showgrid=False, linecolor="#e5e8ee")
+    figure.update_yaxes(gridcolor="#f0f2f5", zeroline=False, ticksuffix="%" if percent else "")
+    return figure
+
+
+def _line_chart(x, y, title: str, color: str, hline: float | None = None, percent: bool = False) -> go.Figure:
+    figure = go.Figure()
+    figure.add_trace(go.Scatter(x=x, y=y, mode="lines", name=title, line=dict(color=color, width=2)))
+    if hline is not None:
+        figure.add_hline(y=hline, line_dash="dot", line_color="#98a2b3", line_width=1)
+    return _base_layout(figure, title, percent)
+
+
+def _breadth_chart(breadth: dict, total: int) -> go.Figure:
+    labels: list[str] = []
+    values: list[object] = []
+    colors: list[str] = []
+    for window in config.BREADTH_MA_WINDOWS:
+        item = breadth["components"].get(f"ma{window}", {})
+        labels.append(f"Trên MA{window}")
+        values.append(item.get("pct"))
+    for window in config.BREADTH_RETURN_WINDOWS:
+        item = breadth["components"].get(f"ret{window}", {})
+        labels.append("Tăng 1 phiên" if window == 1 else f"Tăng {window} phiên")
+        values.append(item.get("pct"))
+    clean = [0.0 if v is None or pd.isna(v) else float(v) for v in values]
+    for value, raw in zip(clean, values):
+        if raw is None or pd.isna(raw):
+            colors.append(_HEX[NONE])
+        else:
+            colors.append(_HEX[GOOD] if value >= 55 else (_HEX[WARN] if value >= 45 else _HEX[BAD]))
+
+    figure = go.Figure(
+        go.Bar(x=labels, y=clean, marker_color=colors, text=[f"{v:.0f}%" for v in clean],
+               textposition="outside", cliponaxis=False)
+    )
+    figure.add_hline(y=50, line_dash="dot", line_color="#98a2b3", line_width=1)
+    figure = _base_layout(figure, f"Độ lan tỏa VN30 ({total} mã trong rổ)", percent=True)
+    figure.update_yaxes(range=[0, 112])
+    return figure
+
+
+def _concentration_chart(concentration: dict) -> go.Figure:
+    table = concentration.get("table")
+    if table is None or table.empty:
+        return _base_layout(go.Figure(), "Tập trung rủi ro biến động", percent=True)
+    top = table.head(10).iloc[::-1]
+    figure = go.Figure(
+        go.Bar(
+            x=top["Tỷ trọng rủi ro %"], y=top["Mã"], orientation="h",
+            marker_color=config.COLOR_WARN,
+            text=[f"{v:.1f}%" for v in top["Tỷ trọng rủi ro %"]],
+            textposition="outside", cliponaxis=False,
+        )
+    )
+    figure = _base_layout(figure, "Top 10 mã theo tỷ trọng rủi ro biến động", percent=True)
+    figure.update_layout(height=340)
+    figure.update_yaxes(gridcolor="white")
+    return figure
+
+
+def render_charts(state: dict) -> None:
+    st.subheader("Diễn biến")
+
+    index = state["index"].reset_index(drop=True)
+    frames = [index[["date", "close"]]]
+    trend_series = state["trend"].get("series")
+    stress_series = state["stress"].get("series")
+    if trend_series is not None and len(trend_series) == len(index):
+        frames.append(trend_series.reset_index(drop=True)[["roro"]])
+    if stress_series is not None and len(stress_series) == len(index):
+        frames.append(stress_series.reset_index(drop=True)[["parkinson_vol"]])
+    chart = pd.concat(frames, axis=1).tail(500)
+
+    c1, c2 = st.columns(2)
+    c1.plotly_chart(
+        _line_chart(chart["date"], chart["close"], "VNINDEX", config.COLOR_MUTED), width="stretch"
+    )
+    if "roro" in chart.columns:
+        c2.plotly_chart(
+            _line_chart(chart["date"], chart["roro"], "RORO — xu hướng tương đối",
+                        config.COLOR_GOOD, hline=0.0),
+            width="stretch",
+        )
+    else:
+        c2.info("Chưa đủ dữ liệu để vẽ chuỗi RORO.")
+
+    c3, c4 = st.columns(2)
+    if "parkinson_vol" in chart.columns:
+        c3.plotly_chart(
+            _line_chart(chart["date"], chart["parkinson_vol"], "Market Stress — biến động Parkinson 22 phiên",
+                        config.COLOR_WARN, percent=True),
+            width="stretch",
+        )
+    else:
+        c3.info("Chưa đủ dữ liệu để vẽ chuỗi biến động.")
+
+    breadth = state["breadth"]
+    if breadth.get("sufficient"):
+        c4.plotly_chart(_breadth_chart(breadth, breadth["universe_size"]), width="stretch")
+    else:
+        c4.info("Chưa có đủ dữ liệu cổ phiếu VN30 để vẽ độ lan tỏa.")
+
+    series = state["dispersion"].get("series")
+    if series is not None and len(series) > 5:
+        st.plotly_chart(
+            _line_chart(series.index, series.values,
+                        "Phân hóa 20 phiên trong rổ VN30 hiện tại", config.COLOR_BAD, percent=True),
+            width="stretch",
+        )
+        st.caption(state["dispersion"].get("historical_basis", ""))
+
+
+def render_portfolio(state: dict) -> None:
+    portfolio = state["portfolio"]
+    st.subheader("Quản trị danh mục")
+    items = [
+        ("Mức rủi ro tham chiếu", portfolio["risk_budget"]),
+        ("Mức độ thận trọng", portfolio["caution"]),
+        ("Kiểm soát đòn bẩy", portfolio["leverage"]),
+        ("Mức độ tập trung danh mục", portfolio["concentration"]),
+        ("Khả năng duy trì tỷ trọng cổ phiếu", portfolio["equity_weight"]),
+    ]
+    for column, (label, text) in zip(st.columns(len(items)), items):
+        column.markdown(
+            f"<div class='card'><div class='label'>{label}</div><div class='sub'>{text}</div></div>",
+            unsafe_allow_html=True,
+        )
+    st.caption(portfolio["disclaimer"])
+
+
+def render_quality(state: dict) -> None:
+    st.subheader("Chất lượng dữ liệu")
+    meta = state["universe"]
+    summary = load_coverage(tuple(meta["symbols"]))
+    log = state.get("update_log") or {}
+    indices = summary["indices"]
+    statuses = summary["statuses"]
+    expected = summary["stock_symbols_expected"]
+    complete = statuses[quality.STATUS_COMPLETE]
+
+    if summary["never_updated"]:
+        headline, headline_tone = "Chưa khởi tạo", NONE
+    elif complete == expected and summary["files_written"] == summary["files_expected"]:
+        headline, headline_tone = "Đầy đủ", GOOD
+    else:
+        headline, headline_tone = "Chưa đầy đủ", WARN
+
+    sync_label = {
+        SYNC_SUCCESS: f"thành công · {summary['sync_files']} tệp",
+        SYNC_VIA_CI: f"workflow đã commit · {summary['sync_files']} tệp",
+        SYNC_SKIPPED: "không có thay đổi",
+        SYNC_FAILED: "thất bại",
+    }.get(summary["sync_status"], "chưa chạy")
+    sync_tone = {
+        SYNC_SUCCESS: GOOD, SYNC_VIA_CI: GOOD, SYNC_SKIPPED: WARN, SYNC_FAILED: BAD,
+    }.get(summary["sync_status"], NONE)
+
+    detail = (
+        row("Ngày dữ liệu", fmt_date(summary["index_last_date"]))
+        + row(
+            "VNINDEX",
+            f"{indices['VNINDEX']['sessions']:,} phiên · đến {fmt_date(indices['VNINDEX']['last_date'])}",
+            GOOD if indices["VNINDEX"]["sessions"] else BAD,
+        )
+        + row(
+            "VN30 index",
+            f"{indices['VN30']['sessions']:,} phiên · đến {fmt_date(indices['VN30']['last_date'])}",
+            GOOD if indices["VN30"]["sessions"] else BAD,
+        )
+        + row("Cổ phiếu VN30 đầy đủ", f"{complete}/{expected}",
+              GOOD if complete == expected else WARN)
+        + row("Thiếu lịch sử", str(statuses[quality.STATUS_SHORT]),
+              GOOD if not statuses[quality.STATUS_SHORT] else WARN)
+        + row("Không có tệp", str(statuses[quality.STATUS_MISSING]),
+              GOOD if not statuses[quality.STATUS_MISSING] else BAD)
+        + row("Lỗi cập nhật", str(statuses[quality.STATUS_ERROR]),
+              GOOD if not statuses[quality.STATUS_ERROR] else BAD)
+        + row("Tệp dữ liệu", f"{summary['files_written']}/{summary['files_expected']}",
+              GOOD if summary["files_written"] == summary["files_expected"] else WARN)
+        + row("Nguồn dữ liệu",
+              f"vnstock {log.get('vnstock_version') or vnstock_version()} · {config.PRIMARY_SOURCE}")
+        + row("Lần cập nhật cuối", (log.get("finished_at") or "—")[:19].replace("T", " "))
+        + row("Đồng bộ GitHub", sync_label, sync_tone)
+    )
+    st.markdown(
+        f"<div class='card'><div class='label'>Tình trạng kho dữ liệu</div>"
+        f"<div class='value {headline_tone}'>{headline}</div>{detail}"
+        f"<div class='foot'>Danh sách VN30 chụp ngày {summary['universe_as_of'] or '—'} từ "
+        f"{summary['universe_source'] or '—'}"
+        f"{' — đang dùng bản dự phòng trong mã nguồn' if summary['universe_is_fallback'] else ''}."
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    if summary["legacy_files"]:
+        st.warning(
+            "Còn tệp ở bố cục cũ data/raw/: " + ", ".join(summary["legacy_files"])
+            + ". Giá cổ phiếu chỉ được lưu ở data/raw/stocks/."
+        )
+
+    if summary["never_updated"]:
+        st.info("Chưa có lần cập nhật nào. Bấm Cập nhật dữ liệu trong thanh bên để khởi tạo.")
+    elif statuses[quality.STATUS_MISSING]:
+        st.warning(
+            f"{statuses[quality.STATUS_MISSING]} mã chưa có tệp giá: "
+            + ", ".join(summary["stock_symbols_missing"])
+        )
+
+    failures = quality.failure_table(log)
+    if len(failures):
+        st.error(f"{len(failures)} nguồn chưa cập nhật được trong lần chạy gần nhất.")
+        st.dataframe(failures, width="stretch", hide_index=True)
+
+    probes = st.session_state.get("api_probes")
+    if probes:
+        with st.expander("Kết quả kiểm tra API gần nhất"):
+            st.dataframe(pd.DataFrame(probes), width="stretch", hide_index=True)
+
+    # Bảng chi tiết chỉ có ý nghĩa khi đã có dữ liệu; ở lần đầu nó chỉ là 30 dòng lỗi.
+    if not summary["never_updated"] or summary["stock_symbols_available"]:
+        with st.expander("Chi tiết từng tệp dữ liệu"):
+            st.dataframe(quality.dataset_rows(meta["symbols"], log), width="stretch", hide_index=True)
+            if log.get("datasets"):
+                st.caption("Số dòng trước và sau khi hợp nhất của lần cập nhật gần nhất")
+                labels = {
+                    "name": "Mã", "source": "Nguồn", "mode": "Chế độ",
+                    "requested_start": "Yêu cầu từ", "requested_end": "Yêu cầu đến",
+                    "rows_before_merge": "Dòng trước", "rows_after_merge": "Dòng sau",
+                    "rows_added": "Dòng thêm", "last_date": "Đến ngày",
+                }
+                table = pd.DataFrame(log["datasets"]).reindex(columns=list(labels))
+                st.dataframe(table.rename(columns=labels), width="stretch", hide_index=True)
+
+
+def render_empty() -> None:
+    st.markdown(
+        "<div class='hero'><h1>TRẠNG THÁI THỊ TRƯỜNG VIỆT NAM</h1>"
+        "<div class='q'>Thị trường đang ở trạng thái nào và điều gì đang tạo nên trạng thái đó?</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.warning("Chưa có dữ liệu VNINDEX trong kho dữ liệu.")
+    st.info("Mở thanh bên, bấm Kiểm tra API rồi bấm Cập nhật dữ liệu để tạo bộ dữ liệu đầu tiên.")
+
+
+def main() -> None:
+    render_sidebar()
+    state = load_market_state()
+    if not state.get("ready"):
+        render_empty()
+        return
+
+    render_hero(state)
+    render_regime(state)
+    render_cards(state)
+    render_vn30(state)
+    render_charts(state)
+    render_portfolio(state)
+    render_quality(state)
+
+    st.caption(
+        "Ứng dụng mô tả trạng thái thị trường để hỗ trợ quản trị rủi ro danh mục. "
+        "Không dự báo giá và không phải khuyến nghị mua bán."
+    )
+
+
+main()
