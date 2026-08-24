@@ -92,3 +92,57 @@ def test_dashboard_renders_the_full_layout_with_complete_data(no_network, temp_s
     assert "TRẠNG THÁI THỊ TRƯỜNG VIỆT NAM" in body
     assert "Market Regime" in body
     assert "mã hợp lệ" in body
+
+
+@pytest.mark.parametrize("available", [0, 15, 29, 30])
+def test_dashboard_never_crashes_at_any_data_stage(no_network, temp_store, available):
+    """0/30, 15/30, 29/30 và 30/30 mã đều phải render được."""
+    from src import config, features, storage, universe as universe_module
+    from src.schema import standardize_ohlcv
+    from tests.conftest import synthetic_ohlcv
+
+    symbols = [f"S{i:02d}" for i in range(30)]
+    universe_module.save_universe(symbols, source="ảnh chụp kiểm thử", as_of="2026-08-23")
+    storage.write_frame(
+        standardize_ohlcv(synthetic_ohlcv(600, seed=1)), storage.index_path(config.VNINDEX_DATASET)
+    )
+    storage.write_frame(
+        standardize_ohlcv(synthetic_ohlcv(600, seed=2)), storage.index_path(config.VN30_INDEX_DATASET)
+    )
+    for i, symbol in enumerate(symbols[:available]):
+        storage.write_frame(
+            standardize_ohlcv(synthetic_ohlcv(320, seed=100 + i)), storage.stock_path(symbol)
+        )
+    features.rebuild(symbols)
+
+    app = AppTest.from_file(APP, default_timeout=180)
+    app.run()
+    assert not app.exception, [str(e) for e in app.exception]
+
+    body = " ".join(m.value for m in app.markdown)
+    assert "TRẠNG THÁI THỊ TRƯỜNG VIỆT NAM" in body
+    assert "Chất lượng dữ liệu" in [h.value for h in app.subheader]
+
+
+def test_first_run_shows_an_invitation_not_a_wall_of_errors(no_network, temp_store):
+    """Lần đầu chưa có giá cổ phiếu thì phải mời khởi tạo, không đổ 30 dòng lỗi."""
+    from src import config, features, storage, universe as universe_module
+    from src.schema import standardize_ohlcv
+    from tests.conftest import synthetic_ohlcv
+
+    symbols = [f"S{i:02d}" for i in range(30)]
+    universe_module.save_universe(symbols, source="ảnh chụp kiểm thử", as_of="2026-08-23")
+    storage.write_frame(
+        standardize_ohlcv(synthetic_ohlcv(600, seed=1)), storage.index_path(config.VNINDEX_DATASET)
+    )
+    features.rebuild(symbols)
+
+    app = AppTest.from_file(APP, default_timeout=180)
+    app.run()
+    assert not app.exception
+
+    invitations = " ".join(item.value for item in app.info)
+    assert "chưa được khởi tạo" in invitations
+    assert "Cập nhật dữ liệu" in invitations
+    # Bảng chi tiết 30 dòng "Không có tệp" không được bung ra ngay ở lần đầu.
+    assert not any("Chi tiết từng tệp dữ liệu" in str(e.label) for e in app.expander)

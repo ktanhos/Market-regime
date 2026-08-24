@@ -185,7 +185,8 @@ def test_dashboard_works_when_only_the_index_is_available(temp_store):
     state = build_snapshot(UNIVERSE)
 
     assert state["ready"] is True
-    assert state["breadth"]["state"] == "CHƯA ĐỦ DỮ LIỆU"
+    assert state["breadth"]["state"] == "CHƯA CÓ DỮ LIỆU"
+    assert state["breadth"]["data_state"] == "no_data"
     assert state["breadth"]["sufficient"] is False
     assert len(state["missing_symbols"]) == 30
 
