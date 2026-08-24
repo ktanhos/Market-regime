@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from src import breadth as breadth_module
 from src import concentration as concentration_module
 from src import config, features, quality, storage
 from src import dispersion as dispersion_module
@@ -33,12 +34,13 @@ from src import universe as universe_module
 from src.github_store import sync_files, token_status
 from src.logging_config import get_logger
 from src.updater import (
-    PHASE_FEATURES,
-    PHASE_INDEX,
+    PHASE_ORDER,
     PHASE_LABELS,
-    PHASE_STOCKS,
     PHASE_SYNC,
-    PHASE_UNIVERSE,
+    SYNC_FAILED,
+    SYNC_SKIPPED,
+    SYNC_SUCCESS,
+    record_sync,
     run_update,
 )
 from src.vnstock_data import connectivity_check, expected_schema, vnstock_version
@@ -108,6 +110,9 @@ _TONE: dict[str, str] = {
     "TÍCH CỰC": GOOD, "TRUNG TÍNH": WARN, "SUY YẾU": BAD,
     "THẤP": GOOD, "BÌNH THƯỜNG": GOOD, "CAO": WARN, "RẤT CAO": BAD,
     "RẤT KHỎE": GOOD, "KHỎE": GOOD, "CÂN BẰNG": WARN, "YẾU": BAD, "RẤT YẾU": BAD,
+    breadth_module.BREADTH_NO_DATA: NONE,
+    breadth_module.BREADTH_INSUFFICIENT: NONE,
+    breadth_module.BREADTH_STALE: WARN,
     dispersion_module.DISPERSION_LOW: GOOD,
     dispersion_module.DISPERSION_NORMAL: WARN,
     dispersion_module.DISPERSION_HIGH: BAD,
@@ -281,13 +286,12 @@ def render_api_check(sb) -> None:
 
 
 def run_update_flow(sb) -> None:
-    """Chạy pipeline cập nhật với năm thanh tiến trình theo giai đoạn."""
-    order = [PHASE_INDEX, PHASE_UNIVERSE, PHASE_STOCKS, PHASE_FEATURES, PHASE_SYNC]
-    bars = {phase: sb.progress(0.0, text=PHASE_LABELS[phase]) for phase in order}
+    """Chạy pipeline cập nhật với thanh tiến trình theo từng giai đoạn."""
+    bars = {phase: sb.progress(0.0, text=PHASE_LABELS[phase]) for phase in PHASE_ORDER}
     line = sb.empty()
 
     def progress(phase: str, ratio: float, message: str) -> None:
-        line.caption(message)
+        line.caption(f"{PHASE_LABELS.get(phase, phase)} · {message}")
         if phase in bars:
             bars[phase].progress(min(1.0, max(0.0, float(ratio))), text=PHASE_LABELS[phase])
 
@@ -299,45 +303,83 @@ def run_update_flow(sb) -> None:
         sb.error(f"Không hoàn tất cập nhật: {type(exc).__name__}: {exc}")
         return
 
+    if report.first_run:
+        sb.info("Đây là lần khởi tạo dữ liệu VN30 đầu tiên.")
     if report.rate_limited:
         sb.warning(report.aborted_reason)
 
-    # --- Đồng bộ GitHub -------------------------------------------------------
+    # --- Đồng bộ GitHub: chỉ đẩy tệp thực sự tồn tại -------------------------
+    line.caption(f"{PHASE_LABELS[PHASE_SYNC]} · Đang đồng bộ")
+    files = storage.data_files()
     try:
         result = sync_files(
-            storage.data_files(),
+            files,
             repo=config.GITHUB_REPO,
             branch=config.GITHUB_BRANCH,
             message=f"Cập nhật dữ liệu thị trường đến {fmt_date(pd.Timestamp.today())}",
             root=config.ROOT,
         )
-        bars[PHASE_SYNC].progress(1.0, text=PHASE_LABELS[PHASE_SYNC])
         if result.committed:
-            sb.success(f"{result.message} Commit {result.commit_sha}.")
+            record_sync(report, SYNC_SUCCESS, result.files, result.message)
         else:
-            sb.info(result.message)
+            record_sync(report, SYNC_SKIPPED, result.files, result.message)
     except Exception as exc:
         logger.exception("Đồng bộ GitHub thất bại")
-        bars[PHASE_SYNC].progress(1.0, text=PHASE_LABELS[PHASE_SYNC])
-        sb.warning(f"Dữ liệu đã lưu cục bộ nhưng chưa đồng bộ lên GitHub: {exc}")
-
+        record_sync(report, SYNC_FAILED, 0, f"{type(exc).__name__}: {exc}")
+    bars[PHASE_SYNC].progress(1.0, text=PHASE_LABELS[PHASE_SYNC])
     line.empty()
-    latest = storage.last_stored_date(storage.index_path(config.VNINDEX_DATASET))
-    headline = f"{report.success_count}/{report.total_count} nguồn · dữ liệu đến ngày {fmt_date(latest)}"
-    if report.completed:
-        sb.success(f"Cập nhật thành công — {headline}")
-    elif report.success_count:
-        sb.warning(f"Cập nhật một phần — {headline}")
-    else:
-        sb.error(f"Cập nhật thất bại — {headline}")
 
-    if report.failures:
-        with sb.expander(f"{report.failure_count} nguồn chưa cập nhật được", expanded=not report.success_count):
-            st.dataframe(quality.failure_table(report.as_dict()), width="stretch", hide_index=True)
+    render_update_result(sb, report)
 
     st.cache_data.clear()
     if report.success_count:
         st.rerun()
+
+
+def render_update_result(sb, report) -> None:
+    """Kết quả cập nhật: tách riêng chỉ số và cổ phiếu, nêu rõ trạng thái đồng bộ."""
+    latest = storage.last_stored_date(storage.index_path(config.VNINDEX_DATASET))
+
+    if report.completed:
+        sb.success("Cập nhật thành công")
+    elif report.data_complete:
+        sb.warning("Dữ liệu đã lấy thành công nhưng chưa đồng bộ GitHub")
+    elif report.success_count:
+        sb.warning("Cập nhật chưa đầy đủ")
+    else:
+        sb.error("Cập nhật thất bại")
+
+    index_ok = report.index_success == report.index_total and report.index_total > 0
+    stock_ok = report.stock_success == report.stock_total and report.stock_total > 0
+    sync_tone = {
+        SYNC_SUCCESS: GOOD, SYNC_SKIPPED: WARN, SYNC_FAILED: BAD,
+    }.get(report.sync_status, NONE)
+    sync_text = {
+        SYNC_SUCCESS: f"{report.sync_files} tệp trong một commit",
+        SYNC_SKIPPED: "không có thay đổi để đồng bộ",
+        SYNC_FAILED: "thất bại",
+    }.get(report.sync_status, "chưa chạy")
+
+    sb.markdown(
+        row("Chỉ số", f"{report.index_success}/{report.index_total} thành công",
+            GOOD if index_ok else BAD)
+        + row("Cổ phiếu VN30", f"{report.stock_success}/{report.stock_total} mã thành công",
+              GOOD if stock_ok else (WARN if report.stock_success else BAD))
+        + row("Tệp dữ liệu", f"{report.files_written}/{report.files_expected}",
+              GOOD if report.files_written == report.files_expected else WARN)
+        + row("Đồng bộ GitHub", sync_text, sync_tone)
+        + row("Dữ liệu đến ngày", fmt_date(latest)),
+        unsafe_allow_html=True,
+    )
+
+    if report.sync_status == SYNC_FAILED:
+        sb.error(f"GitHub: {report.sync_message}")
+    if report.stock_missing:
+        sb.warning(f"{len(report.stock_missing)} mã chưa có tệp: " + ", ".join(report.stock_missing))
+    if report.failures:
+        with sb.expander(f"{report.failure_count} nguồn chưa cập nhật được",
+                         expanded=not report.success_count):
+            st.dataframe(quality.failure_table(report.as_dict()), width="stretch", hide_index=True)
 
 
 # =============================================================================
@@ -460,16 +502,34 @@ def render_vn30(state: dict) -> None:
     breadth, concentration = state["breadth"], state["concentration"]
     st.subheader("Nhóm VN30 hiện tại")
 
-    if not breadth.get("sufficient"):
-        st.warning(
-            f"Chỉ có {breadth.get('max_valid_symbols', 0)}/{breadth['universe_size']} mã VN30 có dữ liệu giá. "
-            "Bấm Cập nhật dữ liệu trong thanh bên để tải giá cổ phiếu thành phần."
+    data_state = breadth.get("data_state", breadth_module.DATA_NONE)
+    total = breadth["universe_size"]
+
+    if data_state == breadth_module.DATA_NONE:
+        st.info(
+            "**Dữ liệu VN30 chưa được khởi tạo.**\n\n"
+            "Ứng dụng đã có dữ liệu VNINDEX nhưng chưa có dữ liệu giá của các cổ phiếu VN30. "
+            "Bấm **Cập nhật dữ liệu** trong thanh bên để tải dữ liệu lần đầu."
         )
-        if breadth["missing_symbols"]:
-            st.caption("Mã chưa có dữ liệu: " + ", ".join(breadth["missing_symbols"]))
         return
 
-    total = breadth["universe_size"]
+    if data_state == breadth_module.DATA_INSUFFICIENT:
+        st.warning(
+            f"Đang có {breadth.get('loaded_symbols', 0)}/{total} mã, trong đó "
+            f"{breadth.get('min_valid_symbols', 0)} mã đủ lịch sử cho MA200. "
+            "Bấm Cập nhật dữ liệu để tải nốt phần còn thiếu."
+        )
+        if breadth["missing_symbols"]:
+            st.caption("Mã chưa có tệp: " + ", ".join(breadth["missing_symbols"]))
+        return
+
+    if data_state == breadth_module.DATA_STALE:
+        st.warning(
+            f"Ngày dữ liệu giữa các mã chênh nhau tới {breadth.get('max_gap_sessions', 0)} phiên. "
+            "Số liệu dưới đây có thể không phản ánh cùng một thời điểm: "
+            + ", ".join(breadth.get("stale_symbols", []))
+        )
+
     rows = ""
     for window in config.BREADTH_MA_WINDOWS:
         item = breadth["components"].get(f"ma{window}", {})
@@ -606,7 +666,7 @@ def render_charts(state: dict) -> None:
     if breadth.get("sufficient"):
         c4.plotly_chart(_breadth_chart(breadth, breadth["universe_size"]), width="stretch")
     else:
-        c4.info("Chưa đủ dữ liệu cổ phiếu VN30 để vẽ độ lan tỏa.")
+        c4.info("Chưa có đủ dữ liệu cổ phiếu VN30 để vẽ độ lan tỏa.")
 
     series = state["dispersion"].get("series")
     if series is not None and len(series) > 5:
@@ -642,37 +702,76 @@ def render_quality(state: dict) -> None:
     summary = load_coverage(tuple(meta["symbols"]))
     log = state.get("update_log") or {}
     indices = summary["indices"]
-    available = summary["stock_symbols_available"]
+    statuses = summary["statuses"]
     expected = summary["stock_symbols_expected"]
-    missing = summary["stock_symbols_missing"]
+    complete = statuses[quality.STATUS_COMPLETE]
 
-    complete = bool(log.get("completed")) and not missing
+    if summary["never_updated"]:
+        headline, headline_tone = "Chưa khởi tạo", NONE
+    elif complete == expected and summary["files_written"] == summary["files_expected"]:
+        headline, headline_tone = "Đầy đủ", GOOD
+    else:
+        headline, headline_tone = "Chưa đầy đủ", WARN
+
+    sync_label = {
+        SYNC_SUCCESS: f"thành công · {summary['sync_files']} tệp",
+        SYNC_SKIPPED: "không có thay đổi",
+        SYNC_FAILED: "thất bại",
+    }.get(summary["sync_status"], "chưa chạy")
+    sync_tone = {SYNC_SUCCESS: GOOD, SYNC_SKIPPED: WARN, SYNC_FAILED: BAD}.get(
+        summary["sync_status"], NONE
+    )
+
     detail = (
         row("Ngày dữ liệu", fmt_date(summary["index_last_date"]))
-        + row("VNINDEX", f"{indices['VNINDEX']['sessions']:,} phiên · đến {fmt_date(indices['VNINDEX']['last_date'])}")
-        + row("VN30", f"{indices['VN30']['sessions']:,} phiên · đến {fmt_date(indices['VN30']['last_date'])}")
-        + row("Số mã hợp lệ", f"{available}/{expected}", GOOD if available == expected else WARN)
-        + row("Số mã thiếu", str(len(missing)), GOOD if not missing else BAD)
-        + row("Nguồn dữ liệu", f"vnstock {log.get('vnstock_version') or vnstock_version()} · {config.PRIMARY_SOURCE}")
-        + row("Lần cập nhật cuối", (log.get("finished_at") or "—")[:19].replace("T", " "))
         + row(
-            "Kết quả lần cuối",
-            f"{log.get('success_count', 0)}/{log.get('total_count', 0)} nguồn" if log else "chưa chạy",
-            GOOD if complete else (NONE if not log else WARN),
+            "VNINDEX",
+            f"{indices['VNINDEX']['sessions']:,} phiên · đến {fmt_date(indices['VNINDEX']['last_date'])}",
+            GOOD if indices["VNINDEX"]["sessions"] else BAD,
         )
+        + row(
+            "VN30 index",
+            f"{indices['VN30']['sessions']:,} phiên · đến {fmt_date(indices['VN30']['last_date'])}",
+            GOOD if indices["VN30"]["sessions"] else BAD,
+        )
+        + row("Cổ phiếu VN30 đầy đủ", f"{complete}/{expected}",
+              GOOD if complete == expected else WARN)
+        + row("Thiếu lịch sử", str(statuses[quality.STATUS_SHORT]),
+              GOOD if not statuses[quality.STATUS_SHORT] else WARN)
+        + row("Không có tệp", str(statuses[quality.STATUS_MISSING]),
+              GOOD if not statuses[quality.STATUS_MISSING] else BAD)
+        + row("Lỗi cập nhật", str(statuses[quality.STATUS_ERROR]),
+              GOOD if not statuses[quality.STATUS_ERROR] else BAD)
+        + row("Tệp dữ liệu", f"{summary['files_written']}/{summary['files_expected']}",
+              GOOD if summary["files_written"] == summary["files_expected"] else WARN)
+        + row("Nguồn dữ liệu",
+              f"vnstock {log.get('vnstock_version') or vnstock_version()} · {config.PRIMARY_SOURCE}")
+        + row("Lần cập nhật cuối", (log.get("finished_at") or "—")[:19].replace("T", " "))
+        + row("Đồng bộ GitHub", sync_label, sync_tone)
     )
     st.markdown(
         f"<div class='card'><div class='label'>Tình trạng kho dữ liệu</div>"
-        f"<div class='value {GOOD if complete else (NONE if not log else WARN)}'>"
-        f"{'Đầy đủ' if complete else ('Chưa cập nhật' if not log else 'Thiếu dữ liệu')}</div>{detail}"
+        f"<div class='value {headline_tone}'>{headline}</div>{detail}"
         f"<div class='foot'>Danh sách VN30 chụp ngày {summary['universe_as_of'] or '—'} từ "
         f"{summary['universe_source'] or '—'}"
-        f"{' — đang dùng bản dự phòng trong mã nguồn' if summary['universe_is_fallback'] else ''}.</div></div>",
+        f"{' — đang dùng bản dự phòng trong mã nguồn' if summary['universe_is_fallback'] else ''}."
+        f"</div></div>",
         unsafe_allow_html=True,
     )
 
-    if missing:
-        st.warning(f"{len(missing)} mã chưa có dữ liệu giá: " + ", ".join(missing))
+    if summary["legacy_files"]:
+        st.warning(
+            "Còn tệp ở bố cục cũ data/raw/: " + ", ".join(summary["legacy_files"])
+            + ". Giá cổ phiếu chỉ được lưu ở data/raw/stocks/."
+        )
+
+    if summary["never_updated"]:
+        st.info("Chưa có lần cập nhật nào. Bấm Cập nhật dữ liệu trong thanh bên để khởi tạo.")
+    elif statuses[quality.STATUS_MISSING]:
+        st.warning(
+            f"{statuses[quality.STATUS_MISSING]} mã chưa có tệp giá: "
+            + ", ".join(summary["stock_symbols_missing"])
+        )
 
     failures = quality.failure_table(log)
     if len(failures):
@@ -684,17 +783,20 @@ def render_quality(state: dict) -> None:
         with st.expander("Kết quả kiểm tra API gần nhất"):
             st.dataframe(pd.DataFrame(probes), width="stretch", hide_index=True)
 
-    with st.expander("Chi tiết từng tệp dữ liệu"):
-        st.dataframe(quality.dataset_rows(meta["symbols"]), width="stretch", hide_index=True)
-        if log.get("datasets"):
-            st.caption("Số dòng trước và sau khi hợp nhất của lần cập nhật gần nhất")
-            labels = {
-                "name": "Mã", "source": "Nguồn", "requested_start": "Yêu cầu từ",
-                "requested_end": "Yêu cầu đến", "rows_before_merge": "Dòng trước",
-                "rows_after_merge": "Dòng sau", "rows_added": "Dòng thêm", "last_date": "Đến ngày",
-            }
-            table = pd.DataFrame(log["datasets"]).reindex(columns=list(labels))
-            st.dataframe(table.rename(columns=labels), width="stretch", hide_index=True)
+    # Bảng chi tiết chỉ có ý nghĩa khi đã có dữ liệu; ở lần đầu nó chỉ là 30 dòng lỗi.
+    if not summary["never_updated"] or summary["stock_symbols_available"]:
+        with st.expander("Chi tiết từng tệp dữ liệu"):
+            st.dataframe(quality.dataset_rows(meta["symbols"], log), width="stretch", hide_index=True)
+            if log.get("datasets"):
+                st.caption("Số dòng trước và sau khi hợp nhất của lần cập nhật gần nhất")
+                labels = {
+                    "name": "Mã", "source": "Nguồn", "mode": "Chế độ",
+                    "requested_start": "Yêu cầu từ", "requested_end": "Yêu cầu đến",
+                    "rows_before_merge": "Dòng trước", "rows_after_merge": "Dòng sau",
+                    "rows_added": "Dòng thêm", "last_date": "Đến ngày",
+                }
+                table = pd.DataFrame(log["datasets"]).reindex(columns=list(labels))
+                st.dataframe(table.rename(columns=labels), width="stretch", hide_index=True)
 
 
 def render_empty() -> None:
