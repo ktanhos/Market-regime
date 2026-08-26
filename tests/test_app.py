@@ -239,6 +239,37 @@ def test_the_api_key_field_is_not_hidden_behind_an_expander(no_network, temp_sto
     assert labels.index("Áp dụng API key") < labels.index("Cập nhật dữ liệu")
 
 
+def test_pipeline_speed_panel_shows_measured_phase_durations(no_network, temp_store):
+    """Đo tốc độ pipeline phải tới được giao diện, không chỉ nằm trong log."""
+    from src import config, features, storage, universe as universe_module
+    from src.schema import standardize_ohlcv
+    from tests.conftest import synthetic_ohlcv
+
+    symbols = [f"S{i:02d}" for i in range(30)]
+    universe_module.save_universe(symbols, source="kiểm thử", as_of="2026-08-21")
+    storage.write_frame(
+        standardize_ohlcv(synthetic_ohlcv(600, seed=1)), storage.index_path(config.VNINDEX_DATASET)
+    )
+    for i, symbol in enumerate(symbols):
+        storage.write_frame(
+            standardize_ohlcv(synthetic_ohlcv(320, seed=100 + i)), storage.stock_path(symbol)
+        )
+    features.rebuild(symbols)
+    log = storage.read_json(config.UPDATE_LOG_FILE) or {}
+    log["phase_seconds"] = {
+        "universe": 0.4, "vnindex": 1.2, "vn30_index": 1.1, "stocks": 42.7,
+        "features": 0.6, "github": 3.2,
+    }
+    storage.write_json(config.UPDATE_LOG_FILE, log)
+
+    app = AppTest.from_file(APP, default_timeout=180)
+    app.run()
+    assert not app.exception, [str(e) for e in app.exception]
+
+    labels = [str(e.label) for e in app.expander]
+    assert any("Tốc độ" in label for label in labels)
+
+
 def test_applying_a_key_through_the_widget_configures_the_run(no_network, temp_store, monkeypatch):
     """Bấm Áp dụng phải thật sự đưa khóa vào session và đổi trạng thái hiển thị."""
     from src import config, features, storage, universe as universe_module
