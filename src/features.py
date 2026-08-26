@@ -77,6 +77,7 @@ def build_snapshot(symbols: Sequence[str] | None = None) -> dict:
         }
 
     vn30 = vn30_features(symbols)
+    last_snapshot = storage.read_json(config.VN30_SNAPSHOT_FILE) or {}
     return {
         "ready": True,
         "index": index_frame,
@@ -90,6 +91,11 @@ def build_snapshot(symbols: Sequence[str] | None = None) -> dict:
         "universe": meta,
         "missing_symbols": vn30["missing"],
         "update_log": storage.read_json(config.UPDATE_LOG_FILE) or {},
+        # Ảnh chụp Breadth/Dispersion/Concentration của lần cập nhật TRƯỚC lần cập
+        # nhật gần nhất (xem ``rebuild``). Dùng để mô tả "đã đổi gì so với lần cập
+        # nhật trước" ở lớp diễn giải (``src.narrative``); không dùng để tính lại
+        # bất kỳ chỉ tiêu nào.
+        "vn30_previous": last_snapshot.get("previous") or {},
     }
 
 
@@ -113,6 +119,29 @@ def rebuild(symbols: Sequence[str] | None = None) -> dict:
     breadth = vn30["breadth"]
     dispersion = vn30["dispersion"]
     concentration = vn30["concentration"]
+
+    # Ảnh chụp trước khi bị ghi đè, để lớp diễn giải so sánh "đã đổi gì so với
+    # lần cập nhật trước". Chỉ giữ vài trường cần cho việc so sánh, không giữ
+    # nguyên toàn bộ ảnh chụp cũ.
+    existing = storage.read_json(config.VN30_SNAPSHOT_FILE) or {}
+    previous_summary = (
+        {
+            "generated_at": existing.get("generated_at"),
+            "as_of": existing.get("as_of"),
+            "breadth_score": existing.get("breadth_score"),
+            "breadth_state": existing.get("breadth_state"),
+            "dispersion": {
+                "value": (existing.get("dispersion") or {}).get("value"),
+                "state": (existing.get("dispersion") or {}).get("state"),
+            },
+            "concentration": {
+                "top_shares": (existing.get("concentration") or {}).get("top_shares", {}),
+                "state": (existing.get("concentration") or {}).get("state"),
+            },
+        }
+        if existing
+        else None
+    )
 
     snapshot = {
         "generated_at": storage.utc_now_iso(),
@@ -146,6 +175,7 @@ def rebuild(symbols: Sequence[str] | None = None) -> dict:
             "contributors": concentration["contributors"],
             "proxy_note": concentration["proxy_note"],
         },
+        "previous": previous_summary,
     }
     storage.write_json(config.VN30_SNAPSHOT_FILE, snapshot)
     logger.info(

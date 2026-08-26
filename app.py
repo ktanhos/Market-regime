@@ -14,6 +14,7 @@ API chỉ được gọi khi người dùng bấm nút trong thanh bên, và l�
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -27,7 +28,7 @@ if str(ROOT) not in sys.path:
 
 from src import breadth as breadth_module
 from src import concentration as concentration_module
-from src import config, features, quality, storage
+from src import config, features, narrative, quality, storage
 from src import dispersion as dispersion_module
 from src import portfolio_risk, regime as regime_module
 from src import universe as universe_module
@@ -65,44 +66,65 @@ st.set_page_config(
 STYLE = """
 <style>
 :root{
-  --ink:#0f172a; --muted:#64748b; --line:#e5e8ee; --surface:#ffffff; --canvas:#f6f7f9;
-  --good:#0f7b52; --bad:#c0392f; --warn:#b7791f; --none:#6b7280;
-  --good-bg:#e8f4ee; --bad-bg:#fbeceb; --warn-bg:#fdf5e5; --none-bg:#f1f2f4;
+  --ink:#0f172a; --muted:#64748b; --faint:#94a3b8; --line:#e7e9ee; --surface:#ffffff; --canvas:#f7f8fa;
+  --good:#0f7b52; --bad:#c0392f; --warn:#b7791f; --none:#6b7280; --accent:#3454d1;
+  --good-bg:#e8f4ee; --bad-bg:#fbeceb; --warn-bg:#fdf5e5; --none-bg:#f1f2f4; --accent-bg:#eaeefb;
+  --shadow:0 1px 2px rgba(15,23,42,.04), 0 8px 24px -16px rgba(15,23,42,.12);
 }
 .stApp{background:var(--canvas);}
-.block-container{max-width:1280px;padding-top:1.4rem;padding-bottom:3.5rem;}
+.block-container{max-width:1280px;padding-top:1.2rem;padding-bottom:3.5rem;}
 h1,h2,h3{color:var(--ink);letter-spacing:-.015em;}
-.hero{background:var(--surface);border:1px solid var(--line);border-radius:18px;
-      padding:1.7rem 1.9rem;margin-bottom:1rem;}
-.hero h1{margin:0 0 .4rem;font-size:1.8rem;line-height:1.25;}
-.hero .q{color:var(--muted);font-size:1.02rem;margin-bottom:1.3rem;}
+h3{font-weight:750;}
+
+/* Hero: kết luận trong vài giây, không thuật ngữ. */
+.hero{background:var(--surface);border:1px solid var(--line);border-radius:20px;
+      padding:1.8rem 2rem;margin-bottom:.9rem;box-shadow:var(--shadow);}
+.hero .kicker{font-size:.71rem;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);
+              font-weight:700;margin-bottom:.35rem;}
+.hero h1{margin:0 0 .5rem;font-size:1.85rem;line-height:1.25;}
+.hero .q{color:var(--muted);font-size:1.02rem;margin-bottom:1.4rem;}
 .hero-grid{display:flex;flex-wrap:wrap;gap:2.6rem;}
 .hero-item .label{font-size:.71rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);}
 .hero-item .value{font-size:1.4rem;font-weight:750;margin-top:.28rem;}
+
 .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;
-      padding:1.1rem 1.2rem;height:100%;}
-.card .label{font-size:.71rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);}
-.card .value{font-size:1.3rem;font-weight:750;margin:.3rem 0 .4rem;line-height:1.25;}
+      padding:1.15rem 1.25rem;height:100%;box-shadow:var(--shadow);}
+.card .label{font-size:.71rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:650;}
+.card .value{font-size:1.32rem;font-weight:750;margin:.32rem 0 .4rem;line-height:1.25;}
 .card .note{color:var(--muted);font-size:.85rem;line-height:1.6;}
-.card .sub{color:var(--ink);font-size:.89rem;line-height:1.55;margin-top:.45rem;}
-.regime{background:var(--surface);border:1px solid var(--line);border-radius:18px;
-        padding:1.5rem 1.8rem;margin-bottom:1rem;}
-.regime .kicker{font-size:.71rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);}
-.regime .name{font-size:1.75rem;font-weight:800;margin:.2rem 0 .55rem;}
-.regime .body{color:var(--ink);font-size:1rem;line-height:1.75;max-width:74ch;}
+.card .sub{color:var(--ink);font-size:.92rem;line-height:1.6;margin-top:.4rem;}
+.card .plain{color:var(--ink);font-size:.93rem;line-height:1.6;margin-top:.35rem;}
+
+/* Khối trạng thái tổng: bên trong đã có "vì sao" bằng lời văn thường. */
+.regime{background:var(--surface);border:1px solid var(--line);border-radius:20px;
+        padding:1.6rem 1.9rem;margin-bottom:.9rem;box-shadow:var(--shadow);}
+.regime .kicker{font-size:.71rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:650;}
+.regime .name{font-size:1.8rem;font-weight:800;margin:.22rem 0 .6rem;}
+.regime .body{color:var(--ink);font-size:1.02rem;line-height:1.75;max-width:76ch;}
+.regime .summary{color:var(--muted);font-size:.95rem;line-height:1.7;max-width:76ch;margin-top:.5rem;}
+.watchbox{background:var(--accent-bg);border-radius:12px;padding:.85rem 1rem;margin-top:1.1rem;
+          font-size:.9rem;line-height:1.6;color:var(--ink);max-width:76ch;}
+.watchbox b{color:var(--accent);}
+
 .pill{display:inline-block;padding:.24rem .75rem;border-radius:999px;font-size:.77rem;font-weight:700;}
 .pill.good{background:var(--good-bg);color:var(--good);}
 .pill.bad{background:var(--bad-bg);color:var(--bad);}
 .pill.warn{background:var(--warn-bg);color:var(--warn);}
 .pill.none{background:var(--none-bg);color:var(--none);}
 .good{color:var(--good);} .bad{color:var(--bad);} .warn{color:var(--warn);} .none{color:var(--none);}
+
 .bar{height:7px;border-radius:999px;background:#edf0f4;overflow:hidden;margin:.5rem 0 .35rem;}
 .bar > span{display:block;height:100%;border-radius:999px;}
 .rowline{display:flex;justify-content:space-between;gap:1rem;font-size:.87rem;
-         padding:.3rem 0;border-bottom:1px dashed var(--line);}
+         padding:.32rem 0;border-bottom:1px dashed var(--line);}
 .rowline:last-child{border-bottom:none;}
 .rowline .k{color:var(--muted);} .rowline .v{font-weight:650;color:var(--ink);text-align:right;}
 .foot{color:var(--muted);font-size:.81rem;line-height:1.65;margin-top:.5rem;}
+
+/* Progressive disclosure: expander của lớp diễn giải kỹ thuật không được nổi
+   bật hơn nội dung phổ thông phía trên nó. */
+div[data-testid="stExpander"]{border:1px solid var(--line);border-radius:12px;background:var(--surface);}
+div[data-testid="stExpander"] summary{font-size:.85rem;color:var(--muted);font-weight:600;}
 </style>
 """
 st.markdown(STYLE, unsafe_allow_html=True)
@@ -213,12 +235,25 @@ def load_market_state() -> dict:
     )
     snapshot["regime"] = regime
     snapshot["portfolio"] = portfolio_risk.guidance(regime)
+    snapshot["story"] = narrative.build_narrative(snapshot)
     return snapshot
 
 
 @st.cache_data(show_spinner=False)
 def load_coverage(symbols: tuple[str, ...]) -> dict:
     return quality.coverage_summary(list(symbols))
+
+
+@st.cache_data(show_spinner=False)
+def load_dataset_rows(symbols: tuple[str, ...], log: dict) -> pd.DataFrame:
+    """Bảng chi tiết từng tệp dữ liệu, chỉ tính lại khi log cập nhật đổi.
+
+    Nội dung này nằm trong một ``st.expander``, nhưng Streamlit vẫn thực thi
+    toàn bộ thân hàm render dù expander đang đóng — nếu không cache thì mỗi
+    lần người dùng tương tác với bất kỳ ô nào trên trang (kể cả gõ vào ô khóa
+    API) đều đọc lại 30+ tệp Parquet từ đĩa một cách không cần thiết.
+    """
+    return quality.dataset_rows(list(symbols), log)
 
 
 # =============================================================================
@@ -416,9 +451,10 @@ def run_update_flow(sb, credentials: ApiCredentials | None = None) -> None:
     if report.rate_limited:
         sb.warning(report.aborted_reason)
 
-    # --- Đồng bộ GitHub: chỉ đẩy tệp thực sự tồn tại -------------------------
+    # --- Đồng bộ GitHub: chỉ đẩy tệp thực sự thay đổi ------------------------
     line.caption(f"{PHASE_LABELS[PHASE_SYNC]} · Đang đồng bộ")
     files = storage.data_files()
+    sync_started = time.monotonic()
     try:
         result = sync_files(
             files,
@@ -434,6 +470,8 @@ def run_update_flow(sb, credentials: ApiCredentials | None = None) -> None:
     except Exception as exc:
         logger.exception("Đồng bộ GitHub thất bại")
         record_sync(report, SYNC_FAILED, 0, f"{type(exc).__name__}: {exc}")
+    report.phase_seconds[PHASE_SYNC] = round(time.monotonic() - sync_started, 2)
+    storage.write_json(config.UPDATE_LOG_FILE, report.as_dict())
     bars[PHASE_SYNC].progress(1.0, text=PHASE_LABELS[PHASE_SYNC])
     line.empty()
 
@@ -499,11 +537,14 @@ def render_update_result(sb, report) -> None:
 # =============================================================================
 
 def render_hero(state: dict) -> None:
+    """Lớp đầu tiên: hiểu kết luận trong vài giây, chưa có thuật ngữ kỹ thuật."""
     regime = state["regime"]
+    story = state["story"]["regime"]
     st.markdown(
         "<div class='hero'>"
+        "<div class='kicker'>Cập nhật trạng thái thị trường</div>"
         "<h1>TRẠNG THÁI THỊ TRƯỜNG VIỆT NAM</h1>"
-        "<div class='q'>Thị trường đang ở trạng thái nào và điều gì đang tạo nên trạng thái đó?</div>"
+        f"<div class='q'>{story['headline']}</div>"
         "<div class='hero-grid'>"
         f"<div class='hero-item'><div class='label'>Market Regime</div>"
         f"<div class='value {tone(regime['regime'])}'>{regime['regime']}</div></div>"
@@ -517,96 +558,97 @@ def render_hero(state: dict) -> None:
 
 
 def render_regime(state: dict) -> None:
+    """Vì sao thị trường ở trạng thái này, và cần theo dõi gì để đánh giá lại."""
     regime = state["regime"]
     portfolio = state["portfolio"]
+    story = state["story"]["regime"]
     notes = "".join(f"<li>{note}</li>" for note in regime["risk_reasons"])
     st.markdown(
         "<div class='regime'>"
-        "<div class='kicker'>Market Regime</div>"
+        "<div class='kicker'>Market Regime · thị trường đang ở đâu và vì sao</div>"
         f"<div class='name {tone(regime['regime'])}'>{regime['regime']}</div>"
         f"<div class='body'>{regime['description']}</div>"
+        f"<div class='summary'>{story['summary']}</div>"
         f"<div style='margin-top:1rem'><span class='pill {tone(regime['risk_level'])}'>"
         f"Mức độ rủi ro: {regime['risk_level']}</span></div>"
         + (f"<ul class='foot'>{notes}</ul>" if notes else "")
         + f"<div class='body' style='margin-top:1rem'><strong>Quản trị danh mục:</strong> "
         f"{portfolio['risk_budget']}</div>"
+        f"<div class='watchbox'><b>Cần theo dõi gì:</b> {story['watch']}</div>"
         "</div>",
         unsafe_allow_html=True,
     )
 
 
+def factor_card(column, title: str, verdict: object, plain: str, story: dict, technical: str) -> None:
+    """Một chỉ tiêu, ba lớp: nhận định ngay → vì sao & cần theo dõi → số liệu kỹ thuật.
+
+    Đây là Progressive Disclosure cho từng chỉ tiêu: người xem không có nền
+    tảng thống kê chỉ cần đọc phần thẻ để hiểu kết luận; ai muốn hiểu sâu hơn
+    mới cần mở phần mở rộng bên dưới.
+    """
+    column.markdown(
+        f"<div class='card'><div class='label'>{title}</div>"
+        f"<div class='value {tone(verdict)}'>{verdict}</div>"
+        f"<div class='plain'>{plain}</div></div>",
+        unsafe_allow_html=True,
+    )
+    with column.expander("Vì sao & cần theo dõi gì"):
+        st.caption(story["why"])
+        st.markdown(f"**Thay đổi:** {story['change']}")
+        st.markdown(f"**Cần theo dõi:** {story['watch']}")
+        st.markdown(f"<div class='foot'>Số liệu kỹ thuật</div>{technical}", unsafe_allow_html=True)
+
+
 def render_cards(state: dict) -> None:
     trend, stress, breadth = state["trend"], state["stress"], state["breadth"]
     dispersion, concentration = state["dispersion"], state["concentration"]
+    story = state["story"]
 
     c1, c2, c3 = st.columns(3)
-    c1.markdown(
-        card(
-            "Xu hướng",
-            trend["state"],
-            "RORO đo chênh lệch giữa sức mạnh động lượng đa khung và trung bình 49 phiên của chính nó.",
-            extra=row("RORO", fmt(trend.get("roro"), 2))
-            + row("Vùng trung tính", "±" + fmt(trend.get("band"), 2))
-            + row("Strength", fmt(trend.get("strength"), 2, "%")),
-        ),
-        unsafe_allow_html=True,
+    factor_card(
+        c1, "Xu hướng", trend["state"], story["trend"]["plain"], story["trend"],
+        technical=row("RORO", fmt(trend.get("roro"), 2))
+        + row("Vùng trung tính", "±" + fmt(trend.get("band"), 2))
+        + row("Strength", fmt(trend.get("strength"), 2, "%")),
     )
-    c2.markdown(
-        card(
-            "Mức biến động",
-            stress["state"],
-            "Market Stress đo bằng biến động Parkinson của VNINDEX so với chính nó. Đây là proxy, không phải VIX.",
-            extra=row("Parkinson 22 phiên", fmt(stress.get("parkinson_vol"), 1, "%"))
-            + row("Phân vị 252 phiên", fmt(stress.get("percentile"), 0) + "/100")
-            + row("Z-score", fmt(stress.get("zscore"), 2)),
-        ),
-        unsafe_allow_html=True,
+    factor_card(
+        c2, "Mức biến động", stress["state"], story["stress"]["plain"], story["stress"],
+        technical=row("Parkinson 22 phiên", fmt(stress.get("parkinson_vol"), 1, "%"))
+        + row("Phân vị 252 phiên", fmt(stress.get("percentile"), 0) + "/100")
+        + row("Z-score", fmt(stress.get("zscore"), 2)),
     )
     components = breadth.get("components", {})
     total = breadth["universe_size"]
-    c3.markdown(
-        card(
-            "Sức khỏe VN30",
-            breadth["state"],
-            f"Breadth score {fmt(breadth.get('score'), 1)}/100 · "
-            f"{breadth.get('valid_symbols', 0)}/{total} mã hợp lệ.",
-            extra="".join(
-                row(f"Trên MA{w}", fmt(components.get(f'ma{w}', {}).get('pct'), 0, "%"))
-                for w in config.BREADTH_MA_WINDOWS
-            ),
+    factor_card(
+        c3, "Sức khỏe VN30", breadth["state"], story["breadth"]["plain"], story["breadth"],
+        technical=row("Breadth score", fmt(breadth.get("score"), 1) + "/100")
+        + row("Mã hợp lệ", f"{breadth.get('valid_symbols', 0)}/{total} mã hợp lệ")
+        + "".join(
+            row(f"Trên MA{w}", fmt(components.get(f'ma{w}', {}).get('pct'), 0, "%"))
+            for w in config.BREADTH_MA_WINDOWS
         ),
-        unsafe_allow_html=True,
     )
 
     c4, c5 = st.columns(2)
     windows = dispersion.get("windows", {})
-    c4.markdown(
-        card(
-            "Phân hóa",
-            dispersion["state"],
-            dispersion.get("historical_basis", ""),
-            extra=row("Dispersion 20 phiên", fmt(dispersion.get("value"), 2, "%"))
-            + row("Dispersion 5 phiên", fmt(windows.get(5, {}).get("value"), 2, "%"))
-            + row("Dispersion 1 phiên", fmt(windows.get(1, {}).get("value"), 2, "%"))
-            + row("Phân vị", fmt(dispersion.get("percentile"), 0) + "/100"),
-        ),
-        unsafe_allow_html=True,
+    factor_card(
+        c4, "Phân hóa", dispersion["state"], story["dispersion"]["plain"], story["dispersion"],
+        technical=row("Dispersion 20 phiên", fmt(dispersion.get("value"), 2, "%"))
+        + row("Dispersion 5 phiên", fmt(windows.get(5, {}).get("value"), 2, "%"))
+        + row("Dispersion 1 phiên", fmt(windows.get(1, {}).get("value"), 2, "%"))
+        + row("Phân vị", fmt(dispersion.get("percentile"), 0) + "/100"),
     )
     top = concentration.get("top_shares", {})
-    c5.markdown(
-        card(
-            "Tập trung rủi ro",
-            concentration["state"],
-            concentration.get("proxy_note", ""),
-            extra=row("Top 5 chiếm", fmt(top.get(5), 1, "%"))
-            + row("Top 10 chiếm", fmt(top.get(10), 1, "%"))
-            + row(
-                "Số mã đóng góp hiệu dụng",
-                f"{fmt(concentration.get('effective_names'), 1)}/{concentration.get('contributors', 0)}",
-            )
-            + row("Herfindahl", fmt(concentration.get("hhi"), 4)),
-        ),
-        unsafe_allow_html=True,
+    factor_card(
+        c5, "Tập trung rủi ro", concentration["state"], story["concentration"]["plain"], story["concentration"],
+        technical=row("Top 5 chiếm", fmt(top.get(5), 1, "%"))
+        + row("Top 10 chiếm", fmt(top.get(10), 1, "%"))
+        + row(
+            "Số mã đóng góp hiệu dụng",
+            f"{fmt(concentration.get('effective_names'), 1)}/{concentration.get('contributors', 0)}",
+        )
+        + row("Herfindahl", fmt(concentration.get("hhi"), 4)),
     )
 
 
@@ -896,10 +938,36 @@ def render_quality(state: dict) -> None:
         with st.expander("Kết quả kiểm tra API gần nhất"):
             st.dataframe(pd.DataFrame(probes), width="stretch", hide_index=True)
 
+    phase_seconds = log.get("phase_seconds") or {}
+    if phase_seconds:
+        with st.expander("Tốc độ lần cập nhật gần nhất"):
+            st.caption(
+                "Đo trực tiếp từng bước của lần cập nhật gần nhất, dùng để xác định "
+                "bước nào thực sự chiếm thời gian trước khi tối ưu bước đó."
+            )
+            total_seconds = sum(v for v in phase_seconds.values() if isinstance(v, (int, float)))
+            table = pd.DataFrame(
+                [
+                    {
+                        "Giai đoạn": PHASE_LABELS.get(name, name),
+                        "Thời gian (giây)": round(seconds, 1),
+                        "Tỷ trọng": f"{seconds / total_seconds * 100:.0f}%" if total_seconds else "—",
+                    }
+                    for name, seconds in phase_seconds.items()
+                ]
+            )
+            st.dataframe(table, width="stretch", hide_index=True)
+            st.caption(
+                "Bước VN30 Stocks bị giới hạn bởi hạn mức lượt gọi/phút của nguồn dữ "
+                "liệu, không phải bởi tốc độ xử lý cục bộ — tăng song song không giúp "
+                "vượt qua giới hạn này. Bước GitHub chỉ tải lên những tệp thực sự đổi "
+                "nội dung so với lần commit trước."
+            )
+
     # Bảng chi tiết chỉ có ý nghĩa khi đã có dữ liệu; ở lần đầu nó chỉ là 30 dòng lỗi.
     if not summary["never_updated"] or summary["stock_symbols_available"]:
         with st.expander("Chi tiết từng tệp dữ liệu"):
-            st.dataframe(quality.dataset_rows(meta["symbols"], log), width="stretch", hide_index=True)
+            st.dataframe(load_dataset_rows(tuple(meta["symbols"]), log), width="stretch", hide_index=True)
             if log.get("datasets"):
                 st.caption("Số dòng trước và sau khi hợp nhất của lần cập nhật gần nhất")
                 labels = {

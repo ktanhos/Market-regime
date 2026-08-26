@@ -19,6 +19,10 @@ Feature Layer           trend · stress · breadth · dispersion · concentratio
 Market Regime Layer     regime
     ↓
 Portfolio Risk Layer    portfolio_risk
+    ↓
+Interpretation Layer    narrative                  chỉ diễn giải, không tính lại gì
+    ↓
+Streamlit UI            app.py
 ```
 
 Phụ thuộc chỉ đi xuống. Không có import vòng. Ba ràng buộc này được kiểm tra tự
@@ -43,7 +47,8 @@ nguồn, nên chúng không thể mục nát theo thời gian.
 | `src/quality.py` | feature | báo cáo chất lượng dữ liệu |
 | `src/regime.py` | regime | bảng quyết định Market Regime |
 | `src/portfolio_risk.py` | danh mục | chuyển chế độ thành tham chiếu rủi ro |
-| `src/github_store.py` | hạ tầng | đồng bộ một commit mỗi lần cập nhật |
+| `src/narrative.py` | diễn giải | dịch các chỉ tiêu sang ngôn ngữ phổ thông: đang ở đâu, vì sao, đã đổi gì, cần theo dõi gì |
+| `src/github_store.py` | hạ tầng | đồng bộ một commit mỗi lần cập nhật, chỉ tải lên tệp thực sự đổi nội dung |
 
 ## Nguyên tắc kiến trúc
 

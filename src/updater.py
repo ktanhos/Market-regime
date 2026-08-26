@@ -172,6 +172,13 @@ class UpdateReport:
     rate_limited: bool = False
     aborted_reason: str = ""
 
+    # Thời gian từng giai đoạn (giây), để ĐO trước khi tối ưu thay vì đoán.
+    # Bước "stocks" là nơi tốn thời gian nhất trong điều kiện bình thường vì bị
+    # giới hạn theo hạn mức API/phút; con số này giúp xác nhận điều đó bằng dữ
+    # liệu thật thay vì suy đoán, và phát hiện sớm nếu một bước khác bất ngờ
+    # trở thành nút thắt (ví dụ khâu đồng bộ GitHub khi có nhiều tệp đổi).
+    phase_seconds: dict = field(default_factory=dict)
+
     @property
     def total_count(self) -> int:
         return self.index_total + self.stock_total
@@ -235,6 +242,7 @@ class UpdateReport:
             "bootstrap": self.bootstrap,
             "rate_limited": self.rate_limited,
             "aborted_reason": self.aborted_reason,
+            "phase_seconds": dict(self.phase_seconds),
         }
 
 
@@ -417,7 +425,9 @@ def _run_update_with_access(
 
     # --- Bước 1: danh sách VN30 hiện tại -------------------------------------
     notify(PHASE_UNIVERSE, 0.2, "Đang lấy danh sách thành phần VN30")
+    _t0 = time.monotonic()
     symbols, stopped = _resolve_universe(report, refresh_universe, universe_fetcher)
+    report.phase_seconds[PHASE_UNIVERSE] = round(time.monotonic() - _t0, 2)
     notify(PHASE_UNIVERSE, 1.0, f"{len(symbols)} mã VN30")
 
     plan = plan_bootstrap(symbols)
@@ -444,6 +454,7 @@ def _run_update_with_access(
         if stopped:
             break
         notify(phase, 0.3, f"Đang cập nhật {label}")
+        _t0 = time.monotonic()
         try:
             info = _update_one(
                 label, symbol, ASSET_INDEX, storage.index_path(dataset),
@@ -453,9 +464,11 @@ def _run_update_with_access(
             report.index_success += 1
         except Exception as exc:
             stopped = _record_failure(report, label, exc)
+        report.phase_seconds[phase] = round(time.monotonic() - _t0, 2)
         notify(phase, 1.0, f"Xong {label}")
 
     # --- Bước 4: từng cổ phiếu VN30 ------------------------------------------
+    _t0 = time.monotonic()
     if not stopped and symbols:
         for i, symbol in enumerate(symbols, start=1):
             mode = "lịch sử đầy đủ" if symbol in plan.full_history else "cập nhật"
@@ -476,10 +489,12 @@ def _run_update_with_access(
                         "Các mã đã lấy được vẫn được giữ lại, lần cập nhật sau sẽ tiếp tục phần còn thiếu."
                     )
                     break
+    report.phase_seconds[PHASE_STOCKS] = round(time.monotonic() - _t0, 2)
     notify(PHASE_STOCKS, 1.0, f"{report.stock_success}/{report.stock_total} mã")
 
     # --- Bước 5: tính lại chỉ tiêu -------------------------------------------
     notify(PHASE_FEATURES, 0.4, "Đang tính Breadth, Dispersion và Risk Concentration")
+    _t0 = time.monotonic()
     try:
         features.rebuild(symbols)
     except Exception as exc:
@@ -492,6 +507,7 @@ def _run_update_with_access(
             }
         )
         logger.exception("Không tính lại được chỉ tiêu")
+    report.phase_seconds[PHASE_FEATURES] = round(time.monotonic() - _t0, 2)
     notify(PHASE_FEATURES, 1.0, "Xong tính toán")
 
     # --- Bước 6: đối chiếu tệp thực tế ---------------------------------------
