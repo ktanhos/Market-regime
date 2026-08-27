@@ -96,6 +96,9 @@ INDEX_HISTORY_YEARS = 8
 STOCK_HISTORY_CALENDAR_DAYS = 430
 # Khi cập nhật tăng dần, lấy chồng lấn để bắt các phiên bị điều chỉnh muộn.
 INCREMENTAL_OVERLAP_DAYS = 12
+# Nếu danh sách VN30 còn tươi mới (dưới N giờ), không gọi API; bỏ qua ngay cả khi refresh_universe=True.
+# Điều này giúp giảm load API khi gọi cập nhật liên tiếp, và tăng khả năng chịu lỗi mạng tạm thời.
+UNIVERSE_FRESHNESS_HOURS = 24
 # Số phiên tối thiểu để một mã được coi là đủ lịch sử. Suy ra từ chỉ tiêu khắt
 # khe nhất đang tính (MA dài nhất) cộng một biên nhỏ, để bảng chất lượng dữ liệu
 # và số mã hợp lệ của breadth không mâu thuẫn nhau.

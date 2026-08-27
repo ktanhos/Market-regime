@@ -143,13 +143,39 @@ def test_rate_limit_stops_the_run_and_explains_why(temp_store):
 
 
 def test_universe_failure_falls_back_to_saved_list(temp_store):
-    universe_module.save_universe(UNIVERSE, source="ảnh chụp kiểm thử")
+    # Lưu universe với ngày cũ để freshness check cho phép gọi API
+    universe_module.save_universe(UNIVERSE, source="ảnh chụp kiểm thử", as_of="2026-08-25")
 
     def failing_universe():
         raise FetchError("không lấy được danh sách", TRANSIENT, symbol="VN30", source="VCI")
 
     report = run_update(fetcher=make_fetcher(), universe_fetcher=failing_universe, sleep=lambda s: None)
-    assert report.universe["status"] == "dùng danh sách đã lưu"
+    assert report.universe["status"] == "dùng danh sách đã lưu (fetch thất bại)"
+    assert report.success_count == 32
+
+
+def test_universe_freshness_check_skips_api_call(temp_store):
+    """Universe tươi mới (< 24 giờ) không gọi API ngay cả khi refresh_universe=True."""
+    universe_module.save_universe(UNIVERSE, source="ảnh chụp kiểm thử", as_of="2026-08-27")
+
+    # Nếu freshness check hoạt động, hàm này sẽ không bao giờ được gọi
+    never_called = False
+    def should_not_call():
+        nonlocal never_called
+        never_called = True
+        return UNIVERSE
+
+    report = run_update(
+        fetcher=make_fetcher(),
+        universe_fetcher=should_not_call,
+        sleep=lambda s: None,
+        refresh_universe=True,
+    )
+
+    # Kiểm tra rằng API không được gọi vì data vẫn tươi mới
+    assert "tươi mới" in report.universe["status"]
+    assert never_called is False
+    assert len(report.universe["symbols"]) == 30
     assert report.success_count == 32
 
 

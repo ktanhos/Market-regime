@@ -342,6 +342,19 @@ def _record_failure(report: UpdateReport, symbol: str, exc: BaseException) -> bo
     return False
 
 
+def _is_universe_fresh(current: dict, hours: int = config.UNIVERSE_FRESHNESS_HOURS) -> bool:
+    """Kiểm tra xem danh sách VN30 còn tươi mới hay không."""
+    as_of = current.get("as_of", "")
+    if not as_of or current.get("is_fallback", False):
+        return False
+    try:
+        cached_date = pd.Timestamp(as_of)
+        elapsed = pd.Timestamp.now(tz="UTC") - cached_date.tz_localize("UTC", ambiguous="NaT")
+        return elapsed.total_seconds() < hours * 3600
+    except (TypeError, ValueError):
+        return False
+
+
 def _resolve_universe(
     report: UpdateReport,
     refresh_universe: bool,
@@ -355,6 +368,11 @@ def _resolve_universe(
         report.universe = {"status": "giữ nguyên", **current}
         return symbols, False
 
+    if _is_universe_fresh(current):
+        report.universe = {"status": "dữ liệu còn tươi mới, bỏ qua gọi API", **current}
+        logger.info("Danh sách VN30 từ %s vẫn tươi mới, bỏ qua gọi API", current.get("as_of", ""))
+        return symbols, False
+
     try:
         fetched = universe_fetcher()
         saved = universe_module.save_universe(
@@ -366,7 +384,7 @@ def _resolve_universe(
         return saved["symbols"], False
     except FetchError as exc:
         report.universe = {
-            "status": "dùng danh sách đã lưu",
+            "status": "dùng danh sách đã lưu (fetch thất bại)",
             "symbols": symbols,
             "as_of": current.get("as_of", ""),
             "source": current.get("source", ""),
@@ -374,7 +392,7 @@ def _resolve_universe(
             "error": str(exc)[:300],
         }
         report.failures.append(exc.as_dict())
-        logger.warning("Không lấy được danh sách VN30, dùng ảnh chụp đã lưu")
+        logger.warning("Không lấy được danh sách VN30 từ API, dùng ảnh chụp đã lưu từ %s", current.get("as_of", ""))
         if exc.kind == RATE_LIMITED:
             report.rate_limited = True
             report.aborted_reason = friendly_message(RATE_LIMITED)

@@ -618,15 +618,22 @@ def fetch_index_members(index: str = "VN30", source: str = config.PRIMARY_SOURCE
 
     Đây là ảnh chụp hiện tại. Nó không nói gì về thành phần của chỉ số trong quá
     khứ và không được dùng để tái tạo lịch sử rổ.
+
+    Gọi: Listing(source).symbols_by_group(index)
     """
     Listing = _listing_class()
     try:
+        logger.info("Đang lấy danh sách %s từ %s...", index, source)
         series = Listing(source=source).symbols_by_group(index)
     except Exception as exc:
-        logger.warning("Không lấy được danh sách %s: %s", index, str(exc)[:200])
+        kind = classify_error(exc)
+        logger.warning(
+            "Không lấy được danh sách %s từ %s [%s]: %s",
+            index, source, kind, str(exc)[:200],
+        )
         raise FetchError(
-            f"Không lấy được danh sách {index}: {type(exc).__name__}: {str(exc)[:200]}",
-            classify_error(exc),
+            f"Không lấy được danh sách {index} từ {source}: {type(exc).__name__}: {str(exc)[:200]}",
+            kind,
             symbol=index,
             source=source,
         ) from exc
@@ -635,13 +642,14 @@ def fetch_index_members(index: str = "VN30", source: str = config.PRIMARY_SOURCE
         {str(s).strip().upper() for s in pd.Series(series).dropna().tolist() if str(s).strip()}
     )
     if len(symbols) < 20:
+        logger.error("Danh sách %s từ %s chỉ trả về %d mã (kỳ vọng ~30)", index, source, len(symbols))
         raise FetchError(
-            f"Danh sách {index} trả về chỉ có {len(symbols)} mã, không hợp lý.",
+            f"Danh sách {index} từ {source} chỉ có {len(symbols)} mã, không hợp lý (kỳ vọng ~30).",
             EMPTY,
             symbol=index,
             source=source,
         )
-    logger.info("Danh sách %s hiện có %d mã", index, len(symbols))
+    logger.info("Danh sách %s lấy được %d mã từ %s", index, len(symbols), source)
     return symbols
 
 
