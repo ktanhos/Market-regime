@@ -128,6 +128,8 @@ def rebuild(symbols: Sequence[str] | None = None) -> dict:
         {
             "generated_at": existing.get("generated_at"),
             "as_of": existing.get("as_of"),
+            "trend_state": existing.get("trend_state"),
+            "stress_state": existing.get("stress_state"),
             "breadth_score": existing.get("breadth_score"),
             "breadth_state": existing.get("breadth_state"),
             "dispersion": {
@@ -143,11 +145,20 @@ def rebuild(symbols: Sequence[str] | None = None) -> dict:
         else None
     )
 
+    # Trạng thái Trend/Stress tại đúng dòng cuối, để lớp diễn giải so sánh "đã
+    # đổi gì so với lần cập nhật trước" mà không cần tính lại. Đây là chỉ tiêu
+    # đã có sẵn trong ``features`` (tính ở trên), chỉ đọc lại giá trị cuối.
+    last_row = features.iloc[-1] if not features.empty else None
+    trend_state = None if last_row is None else last_row.get("trend_state")
+    stress_state = None if last_row is None else last_row.get("stress_state")
+
     snapshot = {
         "generated_at": storage.utc_now_iso(),
         "as_of": None
         if breadth.get("as_of") is None
         else pd.Timestamp(breadth["as_of"]).strftime("%Y-%m-%d"),
+        "trend_state": trend_state,
+        "stress_state": stress_state,
         "universe_size": breadth["universe_size"],
         "valid_symbols": breadth.get("valid_symbols", 0),
         "min_valid_symbols": breadth.get("min_valid_symbols", 0),

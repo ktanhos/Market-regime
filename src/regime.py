@@ -52,8 +52,9 @@ _DESCRIPTIONS = {
         "độ lan tỏa của nhóm VN30 đang mỏng dần."
     ),
     TRANSITION: (
-        "Xu hướng đang thay đổi nhưng mức biến động chưa xác nhận. "
-        "Nhóm cổ phiếu lớn chưa tạo ra sự đồng thuận rõ ràng."
+        "Xu hướng đang thay đổi nhưng mức biến động chưa xác nhận rõ hướng "
+        "tiếp theo. Xem chỉ tiêu Sức khỏe VN30 bên dưới để biết nhóm cổ phiếu "
+        "lớn hiện đang đồng thuận hay phân tán."
     ),
     UNDER_PRESSURE: (
         "Xu hướng suy yếu đi cùng biến động tăng hoặc độ lan tỏa yếu."
