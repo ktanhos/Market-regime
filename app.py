@@ -574,7 +574,7 @@ def render_regime(state: dict) -> None:
         f"<div class='body'>{story['summary']}</div>"
         + (f"<ul class='foot'>{notes}</ul>" if notes else "")
         + "<div class='kicker' style='margin-top:1.2rem'>Điều gì đã thay đổi so với lần cập nhật trước</div>"
-        f"<div class='body'>{story['change']}</div>"
+        f"<div class='body'>{story.get('change', 'Đây là lần đầu có đủ dữ liệu để mô tả, chưa có lần cập nhật trước để so sánh.')}</div>"
         + f"<div class='body' style='margin-top:1rem'><strong>Quản trị danh mục:</strong> "
         f"{portfolio['risk_budget']}</div>"
         f"<div class='watchbox'><b>Cần theo dõi gì:</b> {story['watch']}</div>"
@@ -598,7 +598,7 @@ def factor_card(column, title: str, verdict: object, plain: str, story: dict, te
     )
     with column.expander("Vì sao & cần theo dõi gì"):
         st.caption(story["why"])
-        st.markdown(f"**Thay đổi:** {story['change']}")
+        st.markdown(f"**Thay đổi:** {story.get('change', 'Chưa có lần cập nhật trước để so sánh.')}")
         st.markdown(f"**Cần theo dõi:** {story['watch']}")
         st.markdown(f"<div class='foot'>Số liệu kỹ thuật</div>{technical}", unsafe_allow_html=True)
 
