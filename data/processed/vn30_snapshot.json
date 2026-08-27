@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-27T07:18:37+00:00",
+  "generated_at": "2026-08-27T20:39:06+00:00",
   "as_of": "2026-08-27",
   "trend_state": "TRUNG TÍNH",
   "stress_state": "BÌNH THƯỜNG",
@@ -78,10 +78,10 @@
     "proxy_note": "Tỷ trọng rủi ro suy ra từ biến động 20 phiên của từng mã. Đây là proxy về mức tập trung, không phải đóng góp rủi ro của một danh mục cụ thể."
   },
   "previous": {
-    "generated_at": "2026-08-27T04:02:58+00:00",
+    "generated_at": "2026-08-27T07:18:37+00:00",
     "as_of": "2026-08-27",
-    "trend_state": null,
-    "stress_state": null,
+    "trend_state": "TRUNG TÍNH",
+    "stress_state": "BÌNH THƯỜNG",
     "breadth_score": 72.22222222222223,
     "breadth_state": "RẤT KHỎE",
     "dispersion": {

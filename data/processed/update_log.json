@@ -1,11 +1,11 @@
 {
-  "started_at": "2026-08-27T07:18:15+00:00",
-  "finished_at": "2026-08-27T07:18:37+00:00",
+  "started_at": "2026-08-27T20:38:58+00:00",
+  "finished_at": "2026-08-27T20:39:06+00:00",
   "source": "VCI",
   "vnstock_version": "4.0.7",
   "mode": "incremental",
   "first_run": false,
-  "index_success": 1,
+  "index_success": 2,
   "index_total": 2,
   "stock_success": 30,
   "stock_total": 30,
@@ -14,23 +14,23 @@
   "files_written": 36,
   "files_expected": 36,
   "missing_files": [],
-  "sync_status": "not_run",
-  "sync_files": 0,
-  "sync_message": "",
+  "sync_status": "via_ci",
+  "sync_files": 36,
+  "sync_message": "Dữ liệu được commit bởi workflow, không qua sync_files.",
   "api_access": {
-    "tier": "free",
-    "observed_limit": 60,
-    "effective_limit": 45,
-    "configured": true,
-    "verified": true,
-    "source": "session",
+    "tier": "guest",
+    "observed_limit": 20,
+    "effective_limit": 15,
+    "configured": false,
+    "verified": false,
+    "source": "none",
     "note": ""
   },
   "total_count": 32,
-  "success_count": 31,
-  "failure_count": 2,
-  "data_complete": false,
-  "completed": false,
+  "success_count": 32,
+  "failure_count": 0,
+  "data_complete": true,
+  "completed": true,
   "datasets": [
     {
       "rows": 2001,
@@ -54,7 +54,31 @@
       "rows_before_merge": 2001,
       "rows_after_merge": 2001,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/vnindex.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/vnindex.parquet"
+    },
+    {
+      "rows": 2001,
+      "first_date": "2018-08-23",
+      "last_date": "2026-08-27",
+      "duplicate_dates": 0,
+      "missing_close": 0,
+      "invalid_hl": 0,
+      "non_positive": 0,
+      "warnings": [],
+      "rows_before_merge": 2000,
+      "rows_after_merge": 2001,
+      "rows_added": 1,
+      "name": "VN30",
+      "symbol": "VN30",
+      "asset_type": "index",
+      "source": "VCI",
+      "attempts": 1,
+      "mode": "incremental",
+      "requested_start": "2026-08-14",
+      "requested_end": "2026-08-27",
+      "previous_last_date": "2026-08-26",
+      "rows_fetched": 12,
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/vn30.parquet"
     },
     {
       "rows": 313,
@@ -78,7 +102,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/ACB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/ACB.parquet"
     },
     {
       "rows": 313,
@@ -102,7 +126,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/BID.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/BID.parquet"
     },
     {
       "rows": 313,
@@ -126,7 +150,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/BSR.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/BSR.parquet"
     },
     {
       "rows": 313,
@@ -150,7 +174,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/CTG.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/CTG.parquet"
     },
     {
       "rows": 313,
@@ -174,7 +198,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/FPT.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/FPT.parquet"
     },
     {
       "rows": 313,
@@ -198,7 +222,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/GAS.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/GAS.parquet"
     },
     {
       "rows": 313,
@@ -222,7 +246,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/GVR.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/GVR.parquet"
     },
     {
       "rows": 313,
@@ -246,7 +270,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/HDB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/HDB.parquet"
     },
     {
       "rows": 313,
@@ -270,7 +294,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/HPG.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/HPG.parquet"
     },
     {
       "rows": 313,
@@ -294,7 +318,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/LPB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/LPB.parquet"
     },
     {
       "rows": 313,
@@ -318,7 +342,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/MBB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/MBB.parquet"
     },
     {
       "rows": 313,
@@ -342,7 +366,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/MCH.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/MCH.parquet"
     },
     {
       "rows": 313,
@@ -366,7 +390,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/MSN.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/MSN.parquet"
     },
     {
       "rows": 313,
@@ -390,7 +414,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/MWG.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/MWG.parquet"
     },
     {
       "rows": 313,
@@ -414,7 +438,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/SAB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/SAB.parquet"
     },
     {
       "rows": 313,
@@ -438,7 +462,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/SHB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/SHB.parquet"
     },
     {
       "rows": 313,
@@ -462,7 +486,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/SSB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/SSB.parquet"
     },
     {
       "rows": 313,
@@ -486,7 +510,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/SSI.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/SSI.parquet"
     },
     {
       "rows": 313,
@@ -510,7 +534,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/STB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/STB.parquet"
     },
     {
       "rows": 313,
@@ -534,7 +558,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/TCB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/TCB.parquet"
     },
     {
       "rows": 213,
@@ -558,7 +582,7 @@
       "rows_before_merge": 213,
       "rows_after_merge": 213,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/TCX.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/TCX.parquet"
     },
     {
       "rows": 313,
@@ -582,7 +606,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/VCB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VCB.parquet"
     },
     {
       "rows": 313,
@@ -606,7 +630,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/VHM.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VHM.parquet"
     },
     {
       "rows": 313,
@@ -630,7 +654,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/VIB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VIB.parquet"
     },
     {
       "rows": 313,
@@ -654,7 +678,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/VIC.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VIC.parquet"
     },
     {
       "rows": 313,
@@ -678,7 +702,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/VJC.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VJC.parquet"
     },
     {
       "rows": 313,
@@ -702,7 +726,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/VNM.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VNM.parquet"
     },
     {
       "rows": 313,
@@ -726,7 +750,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/VPB.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VPB.parquet"
     },
     {
       "rows": 313,
@@ -750,7 +774,7 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/VPL.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VPL.parquet"
     },
     {
       "rows": 313,
@@ -774,25 +798,12 @@
       "rows_before_merge": 313,
       "rows_after_merge": 313,
       "rows_added": 0,
-      "path": "/mount/src/market-regime/data/raw/stocks/VRE.parquet"
+      "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VRE.parquet"
     }
   ],
-  "failures": [
-    {
-      "symbol": "VN30",
-      "source": "VCI",
-      "kind": "transient",
-      "message": "Không lấy được danh sách VN30: RetryError: RetryError[<Future at 0x7969710eed80 state=finished raised ConnectionError>]"
-    },
-    {
-      "symbol": "VN30",
-      "source": "VCI",
-      "kind": "transient",
-      "message": "Không lấy được dữ liệu VN30. VCI: RetryError: RetryError[<Future at 0x796971c46c90 state=finished raised ConnectionError>] | VCI: RetryError: RetryError[<Future at 0x796a10b19640 state=finished raised ConnectionError>]"
-    }
-  ],
+  "failures": [],
   "universe": {
-    "status": "dùng danh sách đã lưu",
+    "status": "cập nhật từ API",
     "symbols": [
       "ACB",
       "BID",
@@ -825,10 +836,10 @@
       "VPL",
       "VRE"
     ],
-    "as_of": "2026-08-26",
+    "as_of": "2026-08-27",
     "source": "vnstock Listing('VCI').symbols_by_group('VN30')",
     "is_fallback": false,
-    "error": "Không lấy được danh sách VN30: RetryError: RetryError[<Future at 0x7969710eed80 state=finished raised ConnectionError>]"
+    "note": "Ảnh chụp thành phần VN30 tại ngày as_of. Không dùng danh sách này để suy ra thành phần VN30 trong quá khứ."
   },
   "bootstrap": {
     "mode": "incremental",
@@ -903,10 +914,10 @@
   "rate_limited": false,
   "aborted_reason": "",
   "phase_seconds": {
-    "universe": 6.54,
-    "vnindex": 0.06,
-    "vn30_index": 13.71,
-    "stocks": 0.88,
-    "features": 0.92
+    "universe": 5.12,
+    "vnindex": 0.02,
+    "vn30_index": 2.01,
+    "stocks": 0.38,
+    "features": 0.37
   }
 }
