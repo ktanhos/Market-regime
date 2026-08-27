@@ -12,6 +12,7 @@ from src.schema import DataQualityError, standardize_ohlcv
 from src.vnstock_data import (
     EMPTY,
     RateLimiter,
+    SourceHealth,
     fetch_equity,
     fetch_index,
     PERMANENT,
@@ -264,6 +265,116 @@ def test_fetch_index_members_rejects_an_implausibly_short_list(monkeypatch):
     with pytest.raises(FetchError) as info:
         module.fetch_index_members("VN30")
     assert info.value.kind == module.EMPTY
+
+
+# --- Source health: tránh lặp lại thử một nguồn đang lỗi cho từng mã --------
+
+def test_vci_failing_then_kbs_succeeding_marks_vci_degraded_for_the_session():
+    """Kịch bản 1: VCI lỗi, KBS thành công -> VCI bị đánh dấu tạm không khả dụng."""
+    health = SourceHealth()
+
+    def caller(symbol, source, start, end):
+        if source == "VCI":
+            raise ConnectionError("connection reset by peer")
+        return standardize_ohlcv(synthetic_ohlcv(30))
+
+    result = fetch_history(
+        "FPT", start="2024-01-01", caller=caller, sleep=lambda s: None, source_health=health,
+    )
+    assert result.source == "KBS"
+    assert health.is_degraded("VCI")
+    assert not health.is_degraded("KBS")
+
+    # Mã tiếp theo trong cùng phiên: không còn thử VCI nữa, đi thẳng KBS.
+    seen = []
+
+    def caller2(symbol, source, start, end):
+        seen.append(source)
+        return standardize_ohlcv(synthetic_ohlcv(30))
+
+    result2 = fetch_history(
+        "VNM", start="2024-01-01", caller=caller2, sleep=lambda s: None, source_health=health,
+    )
+    assert seen == ["KBS"]           # VCI không được thử lại
+    assert result2.source == "KBS"
+
+
+def test_vci_succeeding_keeps_the_existing_fallback_order():
+    """Kịch bản 2: VCI thành công -> giữ nguyên logic ưu tiên hiện tại."""
+    health = SourceHealth()
+    seen = []
+
+    def caller(symbol, source, start, end):
+        seen.append(source)
+        return standardize_ohlcv(synthetic_ohlcv(30))
+
+    result = fetch_history(
+        "FPT", start="2024-01-01", caller=caller, sleep=lambda s: None, source_health=health,
+    )
+    assert result.source == "VCI"
+    assert seen == ["VCI"]
+    assert not health.is_degraded("VCI")
+
+    # Mã tiếp theo vẫn thử VCI trước như bình thường.
+    seen2 = []
+
+    def caller2(symbol, source, start, end):
+        seen2.append(source)
+        return standardize_ohlcv(synthetic_ohlcv(30))
+
+    fetch_history("VNM", start="2024-01-01", caller=caller2, sleep=lambda s: None, source_health=health)
+    assert seen2 == ["VCI"]
+
+
+def test_a_single_failed_attempt_that_recovers_on_retry_does_not_degrade_the_source():
+    """Chưa đủ bằng chứng (lỗi một lần rồi tự hồi phục ở lần thử lại) -> không đánh dấu."""
+    health = SourceHealth()
+    attempts = {"n": 0}
+
+    def caller(symbol, source, start, end):
+        attempts["n"] += 1
+        if source == "VCI" and attempts["n"] == 1:
+            raise ConnectionError("connection reset by peer")
+        return standardize_ohlcv(synthetic_ohlcv(30))
+
+    result = fetch_history(
+        "FPT", start="2024-01-01", caller=caller, sleep=lambda s: None, source_health=health,
+    )
+    assert result.source == "VCI"    # tự hồi phục ở lần thử thứ hai của chính VCI
+    assert not health.is_degraded("VCI")
+
+
+def test_source_health_never_excludes_the_only_available_source():
+    """VN30 chỉ có VCI: dù bị đánh dấu lỗi vẫn phải thử, không còn lựa chọn khác."""
+    health = SourceHealth()
+    health.record_source_exhausted("VCI", TRANSIENT)
+    assert health.is_degraded("VCI")
+    assert health.order_sources(("VCI",)) == ("VCI",)
+
+
+def test_source_health_state_does_not_persist_across_sessions():
+    """Kịch bản 5: một phiên lỗi không vô hiệu hóa vĩnh viễn; phiên sau kiểm tra lại."""
+    session1 = SourceHealth()
+
+    def failing(symbol, source, start, end):
+        if source == "VCI":
+            raise ConnectionError("connection reset by peer")
+        return standardize_ohlcv(synthetic_ohlcv(30))
+
+    fetch_history("FPT", start="2024-01-01", caller=failing, sleep=lambda s: None, source_health=session1)
+    assert session1.is_degraded("VCI")
+
+    # Phiên cập nhật mới = đối tượng SourceHealth mới, không kế thừa trạng thái cũ.
+    session2 = SourceHealth()
+    seen = []
+
+    def ok(symbol, source, start, end):
+        seen.append(source)
+        return standardize_ohlcv(synthetic_ohlcv(30))
+
+    fetch_history("FPT", start="2024-01-01", caller=ok, sleep=lambda s: None, source_health=session2)
+    assert seen == ["VCI"]           # phiên mới vẫn thử VCI trước như bình thường
+    assert not session2.is_degraded("VCI")
 
 
 def test_fetch_index_members_normalises_and_sorts(monkeypatch):

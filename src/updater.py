@@ -43,6 +43,7 @@ from src.vnstock_data import (
     ASSET_STOCK,
     RATE_LIMITED,
     FetchError,
+    SourceHealth,
     api_access,
     default_start,
     fetch_history,
@@ -173,6 +174,14 @@ class UpdateReport:
     rate_limited: bool = False
     aborted_reason: str = ""
 
+    # Trạng thái nguồn dữ liệu (VCI/KBS) trong PHIÊN NÀY: nguồn nào bị đánh dấu
+    # tạm thời không khả dụng, đã chờ tổng cộng bao nhiêu giây do backoff, và
+    # bao nhiêu mã phải rớt xuống nguồn dự phòng. Không mang sang phiên sau.
+    source_health: dict = field(default_factory=dict)
+    # Tóm tắt "kiểm tra trước khi chạy 30 mã", suy ra từ các bước 1-3 đã chạy
+    # thật (Universe, VNINDEX, VN30 Index) — không tốn thêm lượt gọi API nào.
+    preflight: dict = field(default_factory=dict)
+
     # Thời gian từng giai đoạn (giây), để ĐO trước khi tối ưu thay vì đoán.
     # Bước "stocks" là nơi tốn thời gian nhất trong điều kiện bình thường vì bị
     # giới hạn theo hạn mức API/phút; con số này giúp xác nhận điều đó bằng dữ
@@ -244,6 +253,8 @@ class UpdateReport:
             "rate_limited": self.rate_limited,
             "aborted_reason": self.aborted_reason,
             "phase_seconds": dict(self.phase_seconds),
+            "source_health": dict(self.source_health),
+            "preflight": dict(self.preflight),
         }
 
 
@@ -264,6 +275,7 @@ def _update_one(
     sleep: Callable[[float], None],
     min_rows: int,
     limiter=None,
+    source_health: "SourceHealth | None" = None,
 ) -> dict:
     """Cập nhật một tập dữ liệu và trả về báo cáo chất lượng.
 
@@ -300,7 +312,10 @@ def _update_one(
         return info
 
     start = default_start(asset_type, last)
-    result = fetcher(symbol, start=start, end=end, asset_type=asset_type, sleep=sleep, limiter=limiter)
+    result = fetcher(
+        symbol, start=start, end=end, asset_type=asset_type, sleep=sleep,
+        limiter=limiter, source_health=source_health,
+    )
     report = storage.merge_and_write(path, result.frame, min_rows=min_rows)
     report.update(
         name=name,
@@ -383,21 +398,102 @@ def _resolve_universe(
         logger.info("Danh sách VN30 cập nhật từ API: %d mã", len(saved["symbols"]))
         return saved["symbols"], False
     except FetchError as exc:
+        report.failures.append(exc.as_dict())
+
+        if symbols:
+            # Không lấy được danh sách mới, nhưng có ảnh chụp VN30 Universe cũ
+            # hợp lệ (đã lưu hoặc danh sách dự phòng trong mã nguồn) — dùng nó
+            # và VẪN tiếp tục cập nhật giá 30 mã, không dừng cả lượt chạy.
+            report.universe = {
+                "status": "dùng VN30 Universe cache (fetch thất bại)",
+                "symbols": symbols,
+                "as_of": current.get("as_of", ""),
+                "source": current.get("source", ""),
+                "is_fallback": current.get("is_fallback", True),
+                "error": str(exc)[:300],
+            }
+            logger.warning(
+                "Không lấy được VN30 Universe mới (%s). Dùng cache từ %s (%d mã), "
+                "tiếp tục cập nhật giá 30 mã.",
+                exc.kind, current.get("as_of", "không rõ"), len(symbols),
+            )
+            if exc.kind == RATE_LIMITED:
+                report.rate_limited = True
+                report.aborted_reason = friendly_message(RATE_LIMITED)
+                return symbols, True
+            return symbols, False
+
+        # Không có cache Universe hợp lệ nào (rỗng) và fetch mới cũng thất bại:
+        # không còn cách nào biết 30 mã nào cần cập nhật, phải dừng an toàn.
         report.universe = {
-            "status": "dùng danh sách đã lưu (fetch thất bại)",
-            "symbols": symbols,
+            "status": "không có VN30 Universe cache hợp lệ, dừng cập nhật",
+            "symbols": [],
             "as_of": current.get("as_of", ""),
             "source": current.get("source", ""),
-            "is_fallback": current.get("is_fallback", True),
+            "is_fallback": True,
             "error": str(exc)[:300],
         }
-        report.failures.append(exc.as_dict())
-        logger.warning("Không lấy được danh sách VN30 từ API, dùng ảnh chụp đã lưu từ %s", current.get("as_of", ""))
-        if exc.kind == RATE_LIMITED:
-            report.rate_limited = True
-            report.aborted_reason = friendly_message(RATE_LIMITED)
-            return symbols, True
-        return symbols, False
+        report.aborted_reason = (
+            "Không lấy được danh sách VN30 mới và không có danh sách VN30 đã lưu hợp lệ nào."
+        )
+        logger.error(
+            "Dừng cập nhật: không lấy được VN30 Universe mới (%s) và không có cache hợp lệ", exc.kind
+        )
+        return [], True
+
+
+def _build_preflight(report: UpdateReport, source_health: SourceHealth, stopped: bool) -> dict:
+    """Tóm tắt tình trạng trước khi chạy 30 mã cổ phiếu.
+
+    Suy hoàn toàn từ những gì bước 1 (Universe), bước 2 (VNINDEX) và bước 3
+    (VN30 Index) đã thực hiện — KHÔNG gọi thêm bất kỳ lượt API nào chỉ để dựng
+    báo cáo này. Trường ``stock_probe_*`` được điền thêm sau khi mã cổ phiếu
+    đầu tiên trong bước 4 chạy xong (xem ``_run_update_with_access``).
+    """
+
+    def _dataset(name: str) -> dict | None:
+        for entry in report.datasets:
+            if entry.get("name") == name:
+                return entry
+        return None
+
+    vnindex = _dataset("VNINDEX")
+    vn30_index = _dataset("VN30")
+
+    health = source_health.as_dict()
+    vci_available = "VCI" not in health["degraded"]
+    kbs_available = "KBS" not in health["degraded"]
+
+    universe_status = report.universe.get("status", "")
+    universe_fetched_new = universe_status == "cập nhật từ API"
+    universe_cache_valid = bool(report.universe.get("symbols"))
+    universe_cache_used = universe_cache_valid and not universe_fetched_new
+
+    can_proceed = not stopped and universe_cache_valid
+    if can_proceed:
+        reason = "Có danh sách VN30 hợp lệ (mới hoặc cache) và ít nhất một nguồn dữ liệu khả dụng."
+    elif not universe_cache_valid:
+        reason = "Không lấy được VN30 Universe mới và không có cache hợp lệ."
+    else:
+        reason = report.aborted_reason or "Đã dừng trước khi cập nhật 30 mã."
+
+    return {
+        "vnindex_ok": vnindex is not None,
+        "vnindex_source": (vnindex or {}).get("source", ""),
+        "vn30_index_ok": vn30_index is not None,
+        "vn30_index_source": (vn30_index or {}).get("source", ""),
+        "stock_probe_symbol": "",
+        "stock_probe_ok": None,
+        "stock_probe_source": "",
+        "vci_available": vci_available,
+        "kbs_available": kbs_available,
+        "universe_fetched_new": universe_fetched_new,
+        "universe_cache_used": universe_cache_used,
+        "universe_cache_valid": universe_cache_valid,
+        "universe_as_of": report.universe.get("as_of", ""),
+        "can_proceed": can_proceed,
+        "reason": reason,
+    }
 
 
 def run_update(
@@ -462,6 +558,13 @@ def _run_update_with_access(
         access.tier, access.observed_limit, limiter.max_calls,
     )
 
+    # ĐÚNG MỘT bộ theo dõi sức khỏe nguồn cho cả lượt chạy: nếu VCI lỗi liên
+    # tục ở bước VNINDEX/VN30 Index (bước 2-3, chạy trước 30 mã cổ phiếu),
+    # 30 lượt fetch cổ phiếu sau đó sẽ ưu tiên KBS ngay thay vì lặp lại việc
+    # thử-rồi-lỗi trên VCI cho từng mã. Trạng thái này chỉ sống trong biến
+    # cục bộ này, mất đi khi hàm kết thúc — phiên sau luôn thử lại từ đầu.
+    source_health = SourceHealth()
+
     legacy = storage.legacy_stock_files()
     if legacy:
         logger.warning(
@@ -506,6 +609,7 @@ def _run_update_with_access(
             info = _update_one(
                 label, symbol, ASSET_INDEX, storage.index_path(dataset),
                 end, fetcher, sleep, min_rows=100, limiter=limiter,
+                source_health=source_health,
             )
             report.datasets.append(info)
             report.index_success += 1
@@ -513,6 +617,12 @@ def _run_update_with_access(
             stopped = _record_failure(report, label, exc)
         report.phase_seconds[phase] = round(time.monotonic() - _t0, 2)
         notify(phase, 1.0, f"Xong {label}")
+
+    # --- Tóm tắt preflight, suy ra từ bước 1-3 đã chạy thật ở trên (không tốn
+    # thêm lượt gọi nào). Đây là báo cáo chẩn đoán: quyết định dừng/tiếp tục
+    # thật sự đã được đưa ra ở bước 1 (Universe) và trong vòng lặp bước 2-3
+    # (rate limit) thông qua biến ``stopped`` — preflight chỉ giải thích lý do.
+    report.preflight = _build_preflight(report, source_health, stopped)
 
     # --- Bước 4: từng cổ phiếu VN30 ------------------------------------------
     _t0 = time.monotonic()
@@ -524,6 +634,7 @@ def _run_update_with_access(
                 info = _update_one(
                     symbol, symbol, ASSET_STOCK, storage.stock_path(symbol),
                     end, fetcher, sleep, min_rows=20, limiter=limiter,
+                    source_health=source_health,
                 )
                 report.datasets.append(info)
                 report.stock_success += 1
@@ -537,6 +648,19 @@ def _run_update_with_access(
                     )
                     break
     report.phase_seconds[PHASE_STOCKS] = round(time.monotonic() - _t0, 2)
+    report.source_health = source_health.as_dict()
+
+    # Điền "test cổ phiếu" của preflight bằng mã cổ phiếu đầu tiên thực sự đã
+    # chạy trong bước 4 — không cần một lượt gọi dò riêng chỉ để có con số này.
+    first_stock = next((d for d in report.datasets if d.get("asset_type") == ASSET_STOCK), None)
+    if first_stock is not None:
+        report.preflight["stock_probe_symbol"] = first_stock.get("symbol", "")
+        report.preflight["stock_probe_ok"] = True
+        report.preflight["stock_probe_source"] = first_stock.get("source", "")
+    elif report.stock_failed:
+        report.preflight["stock_probe_symbol"] = report.stock_failed[0]
+        report.preflight["stock_probe_ok"] = False
+        report.preflight["stock_probe_source"] = ""
     notify(PHASE_STOCKS, 1.0, f"{report.stock_success}/{report.stock_total} mã")
 
     # --- Bước 5: tính lại chỉ tiêu -------------------------------------------

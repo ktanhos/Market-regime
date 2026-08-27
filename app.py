@@ -967,6 +967,44 @@ def render_quality(state: dict) -> None:
                 "nội dung so với lần commit trước."
             )
 
+    source_health = log.get("source_health") or {}
+    preflight = log.get("preflight") or {}
+    if source_health or preflight:
+        with st.expander("Trạng thái nguồn dữ liệu (VCI / KBS) lần cập nhật gần nhất"):
+            if preflight:
+                st.caption(
+                    f"VNINDEX: {'✅' if preflight.get('vnindex_ok') else '❌'} "
+                    f"qua {preflight.get('vnindex_source') or '—'} · "
+                    f"VN30 Index: {'✅' if preflight.get('vn30_index_ok') else '❌'} "
+                    f"qua {preflight.get('vn30_index_source') or '—'}"
+                )
+                stock_ok = preflight.get("stock_probe_ok")
+                if stock_ok is not None:
+                    st.caption(
+                        f"Mã cổ phiếu đầu tiên ({preflight.get('stock_probe_symbol', '—')}): "
+                        f"{'✅' if stock_ok else '❌'} qua {preflight.get('stock_probe_source') or '—'}"
+                    )
+                st.caption(
+                    f"VCI khả dụng: {'có' if preflight.get('vci_available') else 'không'} · "
+                    f"KBS khả dụng: {'có' if preflight.get('kbs_available') else 'không'} · "
+                    f"VN30 Universe: {'lấy mới' if preflight.get('universe_fetched_new') else 'dùng cache'} "
+                    f"({preflight.get('universe_as_of') or 'không rõ'})"
+                )
+                st.caption(
+                    ("Có thể tiếp tục cập nhật. " if preflight.get("can_proceed") else "Đã dừng cập nhật. ")
+                    + preflight.get("reason", "")
+                )
+            if source_health.get("degraded"):
+                st.warning(
+                    "Nguồn tạm không khả dụng trong phiên này (chỉ áp dụng cho lần chạy "
+                    "này, phiên sau sẽ thử lại): " + ", ".join(source_health["degraded"])
+                )
+            if source_health:
+                st.caption(
+                    f"Thời gian chờ do retry/backoff: {source_health.get('retry_seconds', 0):.1f} giây · "
+                    f"Số mã phải rớt xuống nguồn dự phòng: {source_health.get('fallback_count', 0)}"
+                )
+
     # Bảng chi tiết chỉ có ý nghĩa khi đã có dữ liệu; ở lần đầu nó chỉ là 30 dòng lỗi.
     if not summary["never_updated"] or summary["stock_symbols_available"]:
         with st.expander("Chi tiết từng tệp dữ liệu"):

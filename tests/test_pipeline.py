@@ -150,7 +150,7 @@ def test_universe_failure_falls_back_to_saved_list(temp_store):
         raise FetchError("không lấy được danh sách", TRANSIENT, symbol="VN30", source="VCI")
 
     report = run_update(fetcher=make_fetcher(), universe_fetcher=failing_universe, sleep=lambda s: None)
-    assert report.universe["status"] == "dùng danh sách đã lưu (fetch thất bại)"
+    assert report.universe["status"] == "dùng VN30 Universe cache (fetch thất bại)"
     assert report.success_count == 32
 
 
@@ -177,6 +177,24 @@ def test_universe_freshness_check_skips_api_call(temp_store):
     assert never_called is False
     assert len(report.universe["symbols"]) == 30
     assert report.success_count == 32
+
+
+def test_universe_failure_with_no_valid_cache_stops_safely(temp_store, monkeypatch):
+    """Kịch bản 4: fetch mới lỗi VÀ không có cache hợp lệ -> dừng an toàn, báo rõ lý do."""
+    monkeypatch.setattr(
+        universe_module, "load_universe",
+        lambda: {"symbols": [], "as_of": "", "source": "", "is_fallback": True},
+    )
+
+    def failing_universe():
+        raise FetchError("không lấy được danh sách", TRANSIENT, symbol="VN30", source="VCI")
+
+    report = run_update(fetcher=make_fetcher(), universe_fetcher=failing_universe, sleep=lambda s: None)
+    assert report.universe["status"] == "không có VN30 Universe cache hợp lệ, dừng cập nhật"
+    assert report.universe["symbols"] == []
+    assert report.aborted_reason
+    assert report.stock_success == 0
+    assert report.success_count == 0
 
 
 def test_total_api_failure_reports_zero_with_reasons_not_a_crash(temp_store):

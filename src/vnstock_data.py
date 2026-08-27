@@ -7,6 +7,11 @@ Giao diện công khai của module, tầng trên chỉ được dùng đúng nh
     fetch_equity(symbol, start, end)               -> FetchResult
     fetch_index_members(index)                     -> list[str]
     connectivity_check()                           -> list[ProbeResult]
+    SourceHealth()                                 -> theo dõi nguồn nào đang lỗi
+                                                       trong MỘT phiên cập nhật, để
+                                                       ``fetch_history`` không lặp lại
+                                                       thử một nguồn đã biết đang lỗi
+                                                       cho từng mã trong 30 mã VN30.
 
 ``app.py`` không biết gì về cách vnstock hoạt động bên trong.
 
@@ -381,6 +386,81 @@ def friendly_message(kind: str) -> str:
     }.get(kind, "Lỗi không xác định khi lấy dữ liệu.")
 
 
+class SourceHealth:
+    """Trạng thái khả dụng của từng nguồn dữ liệu TRONG một phiên cập nhật.
+
+    Vấn đề cần giải quyết: nếu VCI đang gặp sự cố (ConnectionError, RetryError),
+    logic fallback hiện có vẫn thử VCI trước cho MỖI mã trong 30 mã, mỗi lần
+    tốn ``MAX_ATTEMPTS_PER_SOURCE`` lượt thử cộng thời gian backoff trước khi
+    chuyển sang KBS — dù kết quả gần như chắc chắn giống lần trước.
+
+    Đối tượng này ghi nhận số lần một nguồn dùng hết lượt thử mà vẫn lỗi
+    (``record_source_exhausted``) và số lần thành công (``record_source_succeeded``).
+    Khi số lần lỗi liên tiếp của một nguồn đạt ngưỡng, ``order_sources`` sẽ bỏ
+    nguồn đó khỏi thứ tự thử — miễn là còn nguồn khác để dùng — để các mã sau
+    trong cùng phiên đi thẳng tới nguồn còn khả dụng.
+
+    Chỉ sống trong bộ nhớ của MỘT lần gọi ``run_update``: không ghi xuống đĩa,
+    không mang sang phiên sau. Đây là điểm mấu chốt để "không vô hiệu hóa vĩnh
+    viễn" — phiên cập nhật kế tiếp luôn thử lại nguồn từ đầu bằng một đối tượng
+    ``SourceHealth`` mới.
+    """
+
+    # Chỉ hai loại lỗi này phản ánh vấn đề CỦA RIÊNG một nguồn dữ liệu.
+    # RATE_LIMITED là giới hạn chung của cả phiên (không phải một nguồn tệ hơn
+    # nguồn kia); DEPENDENCY là thiếu thư viện, ảnh hưởng mọi nguồn như nhau;
+    # EMPTY có thể chỉ là mã không có dữ liệu trong khoảng thời gian đó, không
+    # phải nguồn đang lỗi kết nối.
+    _SOURCE_SPECIFIC_KINDS = (TRANSIENT, PERMANENT)
+
+    def __init__(self, failure_threshold: int | None = None):
+        self._failure_threshold = max(1, failure_threshold or config.SOURCE_HEALTH_FAILURE_THRESHOLD)
+        self._exhaustion_count: dict[str, int] = {}
+        self._degraded: set[str] = set()
+        # Thống kê tốc độ: tổng giây đã chờ do backoff, và số lượt phải rớt
+        # xuống nguồn không phải ưu tiên đầu tiên (fallback thật sự xảy ra).
+        self.retry_seconds: float = 0.0
+        self.fallback_count: int = 0
+
+    def record_source_exhausted(self, source: str, kind: str) -> None:
+        """Một nguồn đã dùng hết lượt thử cho MỘT lượt gọi mà vẫn không thành công."""
+        if kind not in self._SOURCE_SPECIFIC_KINDS:
+            return
+        count = self._exhaustion_count.get(source, 0) + 1
+        self._exhaustion_count[source] = count
+        if count >= self._failure_threshold:
+            if source not in self._degraded:
+                logger.warning(
+                    "Nguồn %s lỗi %d lần liên tiếp trong phiên này, tạm thời bỏ qua "
+                    "khi còn nguồn khác khả dụng", source, count,
+                )
+            self._degraded.add(source)
+
+    def record_source_succeeded(self, source: str) -> None:
+        self._exhaustion_count[source] = 0
+        self._degraded.discard(source)
+
+    def is_degraded(self, source: str) -> bool:
+        return source in self._degraded
+
+    def order_sources(self, sources: tuple[str, ...]) -> tuple[str, ...]:
+        """Bỏ nguồn đang lỗi khỏi thứ tự thử, trừ khi không còn nguồn nào khác.
+
+        Không bao giờ trả về danh sách rỗng: nếu mọi nguồn khả dĩ đều đang bị
+        đánh dấu lỗi thì vẫn phải thử lại toàn bộ, vì đó là lựa chọn duy nhất.
+        """
+        healthy = tuple(s for s in sources if not self.is_degraded(s))
+        return healthy or sources
+
+    def as_dict(self) -> dict:
+        return {
+            "degraded": sorted(self._degraded),
+            "exhaustion_count": dict(self._exhaustion_count),
+            "retry_seconds": round(self.retry_seconds, 2),
+            "fallback_count": self.fallback_count,
+        }
+
+
 # --- Truy cập vnstock --------------------------------------------------------
 
 def vnstock_version() -> str:
@@ -495,6 +575,7 @@ def fetch_history(
     sleep: Callable[[float], None] = time.sleep,
     caller: Callable[..., pd.DataFrame] | None = None,
     limiter: "RateLimiter | None" = None,
+    source_health: "SourceHealth | None" = None,
 ) -> FetchResult:
     """Lấy lịch sử giá của một mã: tuần tự, có điều tiết, không thử lại vô hạn.
 
@@ -506,10 +587,17 @@ def fetch_history(
     * ``transient``/``empty``   -> thử lại tối đa ``max_attempts`` lần với backoff mũ.
 
     ``caller`` chỉ dùng cho kiểm thử: nó thay thế lời gọi mạng thật.
+
+    ``source_health``, nếu được truyền vào, sẽ đẩy nguồn đang lỗi liên tục
+    trong phiên này xuống cuối (hoặc bỏ hẳn nếu còn nguồn khác) thay vì luôn
+    thử theo đúng thứ tự mặc định — đây là cơ chế tránh lặp lại retry vô ích
+    trên một nguồn đã biết đang không khả dụng cho 30 mã còn lại.
     """
     symbol = symbol.upper()
     end = end or date.today().isoformat()
     sources = tuple(sources or sources_for(symbol, asset_type))
+    if source_health is not None:
+        sources = source_health.order_sources(sources)
     max_attempts = max_attempts or config.MAX_ATTEMPTS_PER_SOURCE
     call = caller or _single_call
 
@@ -519,6 +607,7 @@ def fetch_history(
 
     for source in sources:
         attempt = 0
+        source_kind: str | None = None
         while attempt < max_attempts:
             attempt += 1
             attempts += 1
@@ -531,11 +620,16 @@ def fetch_history(
                 logger.info(
                     "Lấy %s từ %s: %d dòng (%s lượt gọi)", symbol, source, len(frame), attempts
                 )
+                if source_health is not None:
+                    source_health.record_source_succeeded(source)
+                    if source != sources[0]:
+                        source_health.fallback_count += 1
                 return FetchResult(symbol=symbol, frame=frame, source=source, attempts=attempts)
             except FetchError:
                 raise
             except Exception as exc:
                 kind = classify_error(exc)
+                source_kind = kind
                 errors.append(f"{source}: {type(exc).__name__}: {str(exc)[:200]}")
                 logger.warning("Lỗi lấy %s từ %s [%s]: %s", symbol, source, kind, str(exc)[:200])
                 if kind == RATE_LIMITED:
@@ -563,7 +657,13 @@ def fetch_history(
                         config.BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
                         config.BACKOFF_MAX_SECONDS,
                     )
+                    if source_health is not None:
+                        source_health.retry_seconds += delay
                     sleep(delay)
+        # Nguồn này không thành công cho lượt gọi này, dù kết thúc bằng break
+        # (permanent/dependency) hay hết lượt thử (transient/empty lặp lại).
+        if source_health is not None and source_kind is not None:
+            source_health.record_source_exhausted(source, source_kind)
 
     kind = TRANSIENT if errors else EMPTY
     raise FetchError(

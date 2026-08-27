@@ -64,6 +64,13 @@ MAX_ATTEMPTS_PER_SOURCE = 2   # vnstock đã tự retry 3 lần bên trong mỗi
 BACKOFF_BASE_SECONDS = 2.0
 BACKOFF_MAX_SECONDS = 16.0
 
+# Số lần một nguồn dùng hết lượt thử cho một lượt gọi (đã retry đủ
+# MAX_ATTEMPTS_PER_SOURCE) mà vẫn không thành công, trước khi bị đánh dấu tạm
+# thời không khả dụng cho phần còn lại của phiên cập nhật. Trạng thái này chỉ
+# sống trong bộ nhớ của một lần chạy, không ghi xuống đĩa nên phiên sau luôn
+# thử lại từ đầu.
+SOURCE_HEALTH_FAILURE_THRESHOLD = 1
+
 # Biến môi trường / secret chứa API key vnstock (tùy chọn).
 VNSTOCK_API_KEY_ENV = "VNSTOCK_API_KEY"
 
