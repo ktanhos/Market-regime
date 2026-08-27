@@ -37,6 +37,7 @@ from src import config, features, storage
 from src import universe as universe_module
 from src.logging_config import get_logger
 from src.credentials import ApiCredentials, resolve_vnstock_api_key
+from src.schema import inspect_frame
 from src.vnstock_data import (
     ASSET_INDEX,
     ASSET_STOCK,
@@ -268,8 +269,36 @@ def _update_one(
 
     Ngày bắt đầu do ``default_start`` quyết định: chưa có tệp thì lấy đủ lịch
     sử, đã có tệp thì nối tiếp từ ngày cuối trừ cửa sổ chồng lấn.
+
+    Nếu tệp đã có dữ liệu đến đúng ngày ``end`` rồi thì bỏ qua lượt gọi API:
+    trong một ngày không thể xuất hiện thêm phiên giao dịch mới, nên gọi lại
+    chỉ tốn hạn mức mà không mang về dữ liệu mới. Đây là bước freshness/cache
+    được ưu tiên trước khi cân nhắc chạy song song.
     """
     last = storage.last_stored_date(path)
+    if last is not None and pd.Timestamp(last).normalize() >= pd.Timestamp(end).normalize():
+        existing = storage.read_frame(path)
+        info = inspect_frame(existing).as_dict()
+        rows = info["rows"]
+        info.update(
+            name=name,
+            symbol=symbol,
+            asset_type=asset_type,
+            source="cache",
+            attempts=0,
+            mode="up_to_date",
+            requested_start=None,
+            requested_end=end,
+            previous_last_date=pd.Timestamp(last).strftime("%Y-%m-%d"),
+            rows_fetched=0,
+            rows_before_merge=rows,
+            rows_after_merge=rows,
+            rows_added=0,
+            path=str(path),
+        )
+        logger.info("%s đã có dữ liệu đến %s, bỏ qua lượt gọi API", symbol, info["last_date"])
+        return info
+
     start = default_start(asset_type, last)
     result = fetcher(symbol, start=start, end=end, asset_type=asset_type, sleep=sleep, limiter=limiter)
     report = storage.merge_and_write(path, result.frame, min_rows=min_rows)

@@ -316,6 +316,49 @@ _REGIME_WATCH = {
 }
 
 
+def _regime_change(state: dict, current_regime: str) -> str:
+    """Điều gì đã đổi so với lần cập nhật dữ liệu trước, không phải so với vài phiên gần đây.
+
+    Dùng lại đúng bảng quyết định của Market Regime Layer (``regime_module.classify_regime``)
+    trên các đầu vào của lần cập nhật TRƯỚC để biết trạng thái đó là gì — không thêm ngưỡng
+    hay công thức mới, chỉ áp lại quy tắc đã có cho một bộ đầu vào khác.
+    """
+    previous = state.get("vn30_previous") or {}
+    prev_trend = previous.get("trend_state")
+    prev_stress = previous.get("stress_state")
+    prev_breadth_score = _num(previous.get("breadth_score"))
+
+    if not previous or not prev_trend or not prev_stress:
+        return "Đây là lần đầu có đủ dữ liệu để mô tả, chưa có lần cập nhật trước để so sánh."
+
+    prev_regime = regime_module.classify_regime(prev_trend, prev_stress, prev_breadth_score)
+
+    parts = []
+    if prev_regime != current_regime:
+        parts.append(f"Market Regime đã chuyển từ {prev_regime} sang {current_regime}.")
+    else:
+        parts.append(f"Market Regime vẫn giữ nguyên ở {current_regime} so với lần cập nhật trước.")
+
+    trend_state = state["trend"].get("state")
+    if trend_state and trend_state != prev_trend:
+        parts.append(f"Xu hướng đổi từ {prev_trend} sang {trend_state}.")
+
+    stress_state = state["stress"].get("state")
+    if stress_state and stress_state != prev_stress:
+        parts.append(f"Mức biến động đổi từ {prev_stress} sang {stress_state}.")
+
+    breadth_score = _num(state["breadth"].get("score"))
+    if breadth_score is not None and prev_breadth_score is not None:
+        delta = breadth_score - prev_breadth_score
+        if abs(delta) >= 0.5:
+            parts.append(
+                f"Độ lan tỏa VN30 {_direction_word(delta, ' điểm')} so với lần cập nhật trước "
+                f"({prev_breadth_score:.0f} → {breadth_score:.0f}/100)."
+            )
+
+    return " ".join(parts)
+
+
 def regime_story(state: dict) -> dict:
     """Tóm tắt một khổ cho người không có nền tảng thống kê: đang ở đâu, vì sao."""
     regime = state["regime"]
@@ -345,6 +388,7 @@ def regime_story(state: dict) -> dict:
     return {
         "headline": regime["description"],
         "summary": summary,
+        "change": _regime_change(state, regime["regime"]),
         "watch": _REGIME_WATCH.get(regime["regime"], _REGIME_WATCH[regime_module.UNKNOWN]),
     }
 

@@ -558,20 +558,23 @@ def render_hero(state: dict) -> None:
 
 
 def render_regime(state: dict) -> None:
-    """Vì sao thị trường ở trạng thái này, và cần theo dõi gì để đánh giá lại."""
+    """Ba khối thông tin MỚI, không lặp lại kết luận đã nêu ở Hero:
+
+    vì sao thị trường ở trạng thái này -> điều gì đã đổi so với lần cập nhật
+    trước -> cần theo dõi gì để biết khi nào đánh giá lại. Tên chế độ, mô tả
+    một câu và mức độ rủi ro đã xuất hiện ở Hero nên không lặp lại ở đây.
+    """
     regime = state["regime"]
     portfolio = state["portfolio"]
     story = state["story"]["regime"]
     notes = "".join(f"<li>{note}</li>" for note in regime["risk_reasons"])
     st.markdown(
         "<div class='regime'>"
-        "<div class='kicker'>Market Regime · thị trường đang ở đâu và vì sao</div>"
-        f"<div class='name {tone(regime['regime'])}'>{regime['regime']}</div>"
-        f"<div class='body'>{regime['description']}</div>"
-        f"<div class='summary'>{story['summary']}</div>"
-        f"<div style='margin-top:1rem'><span class='pill {tone(regime['risk_level'])}'>"
-        f"Mức độ rủi ro: {regime['risk_level']}</span></div>"
+        "<div class='kicker'>Vì sao thị trường ở trạng thái này</div>"
+        f"<div class='body'>{story['summary']}</div>"
         + (f"<ul class='foot'>{notes}</ul>" if notes else "")
+        + "<div class='kicker' style='margin-top:1.2rem'>Điều gì đã thay đổi so với lần cập nhật trước</div>"
+        f"<div class='body'>{story['change']}</div>"
         + f"<div class='body' style='margin-top:1rem'><strong>Quản trị danh mục:</strong> "
         f"{portfolio['risk_budget']}</div>"
         f"<div class='watchbox'><b>Cần theo dõi gì:</b> {story['watch']}</div>"

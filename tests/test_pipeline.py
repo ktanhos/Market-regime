@@ -87,6 +87,26 @@ def test_merge_does_not_duplicate_dates_on_repeated_updates(temp_store):
     assert len(after) >= len(before)
 
 
+def test_symbol_already_current_today_skips_the_api_call(temp_store):
+    """Đã có dữ liệu đến đúng hôm nay thì không gọi lại API cho mã đó."""
+    today = pd.Timestamp.today().normalize()
+    storage.write_frame(
+        standardize_ohlcv(synthetic_ohlcv(320, seed=1, start="2024-01-01")).assign(
+            date=lambda d: pd.date_range(end=today, periods=len(d))
+        ),
+        storage.stock_path("S00"),
+    )
+    fetcher = make_fetcher()
+    report = run_update(fetcher=fetcher, universe_fetcher=universe_fetcher, sleep=lambda s: None)
+
+    called_symbols = {c[0] for c in fetcher.calls}
+    assert "S00" not in called_symbols
+    entry = next(d for d in report.datasets if d["name"] == "S00")
+    assert entry["source"] == "cache"
+    assert entry["rows_fetched"] == 0
+    assert report.stock_success == 30   # vẫn tính là thành công, chỉ không gọi API
+
+
 def test_update_log_records_rows_before_and_after_merge(temp_store):
     run_update(fetcher=make_fetcher(), universe_fetcher=universe_fetcher, sleep=lambda s: None)
     log = storage.read_json(config.UPDATE_LOG_FILE)
