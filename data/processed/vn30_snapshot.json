@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-08-27T20:39:06+00:00",
-  "as_of": "2026-08-27",
+  "generated_at": "2026-08-28T21:15:48+00:00",
+  "as_of": "2026-08-28",
   "trend_state": "TRUNG TÍNH",
   "stress_state": "BÌNH THƯỜNG",
   "universe_size": 30,
@@ -8,11 +8,11 @@
   "min_valid_symbols": 30,
   "max_valid_symbols": 30,
   "missing_symbols": [],
-  "breadth_score": 72.22222222222223,
-  "breadth_state": "RẤT KHỎE",
+  "breadth_score": 68.33333333333333,
+  "breadth_state": "KHỎE",
   "breadth_components": {
     "ma20": {
-      "pct": 93.33333333333333,
+      "pct": 90.0,
       "valid": 30,
       "window": 20
     },
@@ -22,63 +22,63 @@
       "window": 50
     },
     "ma200": {
-      "pct": 50.0,
+      "pct": 46.666666666666664,
       "valid": 30,
       "window": 200
     },
     "ret1": {
-      "pct": 36.666666666666664,
+      "pct": 43.333333333333336,
       "valid": 30,
       "window": 1
     },
     "ret5": {
-      "pct": 86.66666666666667,
+      "pct": 70.0,
       "valid": 30,
       "window": 5
     },
     "ret20": {
-      "pct": 90.0,
+      "pct": 83.33333333333334,
       "valid": 30,
       "window": 20
     }
   },
   "dispersion": {
-    "value": 6.116449781691746,
+    "value": 6.114898250799187,
     "percentile": 11.11111111111111,
     "state": "PHÂN HÓA THẤP",
     "windows": {
       "1": {
-        "value": 0.9152680440339049,
-        "percentile": 2.380952380952381,
-        "observations": 312
+        "value": 1.6431732461104822,
+        "percentile": 37.698412698412696,
+        "observations": 313
       },
       "5": {
-        "value": 3.808208310728556,
-        "percentile": 38.88888888888889,
-        "observations": 308
+        "value": 3.770865431052757,
+        "percentile": 38.095238095238095,
+        "observations": 309
       },
       "20": {
-        "value": 6.116449781691746,
+        "value": 6.114898250799187,
         "percentile": 11.11111111111111,
-        "observations": 293
+        "observations": 294
       }
     },
     "historical_basis": "Phân vị tính trên rổ VN30 hiện tại kéo ngược về quá khứ, không phải thành phần VN30 thực tế của từng ngày. Chỉ dùng để mô tả bối cảnh."
   },
   "concentration": {
-    "hhi": 0.03633815719995598,
-    "effective_names": 27.51928212807697,
+    "hhi": 0.03633745630644369,
+    "effective_names": 27.51981293260395,
     "top_shares": {
-      "5": 24.889772708906342,
-      "10": 45.39157827204829
+      "5": 24.858575930240683,
+      "10": 45.16519145024972
     },
-    "percentile": 11.11111111111111,
+    "percentile": 11.507936507936508,
     "state": "TẬP TRUNG THẤP",
     "contributors": 30,
     "proxy_note": "Tỷ trọng rủi ro suy ra từ biến động 20 phiên của từng mã. Đây là proxy về mức tập trung, không phải đóng góp rủi ro của một danh mục cụ thể."
   },
   "previous": {
-    "generated_at": "2026-08-27T07:18:37+00:00",
+    "generated_at": "2026-08-27T20:39:06+00:00",
     "as_of": "2026-08-27",
     "trend_state": "TRUNG TÍNH",
     "stress_state": "BÌNH THƯỜNG",
