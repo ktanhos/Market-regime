@@ -31,7 +31,7 @@
     "VPL",
     "VRE"
   ],
-  "as_of": "2026-08-31",
+  "as_of": "2026-09-01",
   "source": "vnstock Listing('VCI').symbols_by_group('VN30')",
   "is_fallback": false,
   "note": "Ảnh chụp thành phần VN30 tại ngày as_of. Không dùng danh sách này để suy ra thành phần VN30 trong quá khứ."
