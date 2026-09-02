@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-09-01T15:01:51+00:00",
-  "finished_at": "2026-09-01T15:04:33+00:00",
+  "started_at": "2026-09-02T14:36:57+00:00",
+  "finished_at": "2026-09-02T14:41:19+00:00",
   "source": "VCI",
   "vnstock_version": "4.0.7",
   "mode": "incremental",
@@ -51,9 +51,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/vnindex.parquet"
     },
     {
@@ -75,9 +75,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/vn30.parquet"
     },
     {
@@ -99,9 +99,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/ACB.parquet"
     },
     {
@@ -123,9 +123,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/BID.parquet"
     },
     {
@@ -147,9 +147,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/BSR.parquet"
     },
     {
@@ -171,9 +171,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/CTG.parquet"
     },
     {
@@ -195,9 +195,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/FPT.parquet"
     },
     {
@@ -219,9 +219,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/GAS.parquet"
     },
     {
@@ -243,9 +243,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/GVR.parquet"
     },
     {
@@ -267,9 +267,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/HDB.parquet"
     },
     {
@@ -291,9 +291,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/HPG.parquet"
     },
     {
@@ -315,9 +315,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/LPB.parquet"
     },
     {
@@ -339,9 +339,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/MBB.parquet"
     },
     {
@@ -363,9 +363,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/MCH.parquet"
     },
     {
@@ -387,9 +387,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/MSN.parquet"
     },
     {
@@ -411,9 +411,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/MWG.parquet"
     },
     {
@@ -435,9 +435,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/SAB.parquet"
     },
     {
@@ -459,9 +459,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/SHB.parquet"
     },
     {
@@ -483,9 +483,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/SSB.parquet"
     },
     {
@@ -507,9 +507,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/SSI.parquet"
     },
     {
@@ -531,9 +531,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/STB.parquet"
     },
     {
@@ -555,9 +555,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/TCB.parquet"
     },
     {
@@ -579,9 +579,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/TCX.parquet"
     },
     {
@@ -603,9 +603,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VCB.parquet"
     },
     {
@@ -627,9 +627,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VHM.parquet"
     },
     {
@@ -651,9 +651,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VIB.parquet"
     },
     {
@@ -675,9 +675,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VIC.parquet"
     },
     {
@@ -699,9 +699,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VJC.parquet"
     },
     {
@@ -723,9 +723,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VNM.parquet"
     },
     {
@@ -747,9 +747,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VPB.parquet"
     },
     {
@@ -768,12 +768,12 @@
       "symbol": "VPL",
       "asset_type": "stock",
       "source": "VCI",
-      "attempts": 1,
+      "attempts": 2,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VPL.parquet"
     },
     {
@@ -795,9 +795,9 @@
       "attempts": 1,
       "mode": "incremental",
       "requested_start": "2026-08-16",
-      "requested_end": "2026-09-01",
+      "requested_end": "2026-09-02",
       "previous_last_date": "2026-08-28",
-      "rows_fetched": 14,
+      "rows_fetched": 15,
       "path": "/home/runner/work/Market-regime/Market-regime/data/raw/stocks/VRE.parquet"
     }
   ],
@@ -836,7 +836,7 @@
       "VPL",
       "VRE"
     ],
-    "as_of": "2026-09-01",
+    "as_of": "2026-09-02",
     "source": "vnstock Listing('VCI').symbols_by_group('VN30')",
     "is_fallback": false,
     "note": "Ảnh chụp thành phần VN30 tại ngày as_of. Không dùng danh sách này để suy ra thành phần VN30 trong quá khứ."
@@ -914,10 +914,10 @@
   "rate_limited": false,
   "aborted_reason": "",
   "phase_seconds": {
-    "universe": 5.98,
-    "vnindex": 1.68,
-    "vn30_index": 1.09,
-    "stocks": 152.41,
-    "features": 0.28
+    "universe": 6.71,
+    "vnindex": 1.91,
+    "vn30_index": 1.21,
+    "stocks": 251.33,
+    "features": 0.38
   }
 }
